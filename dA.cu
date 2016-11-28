@@ -9,21 +9,20 @@
 // includes, kernel
 #include <dA_kernel.cu>
 
-// declarations
+// declarations for CPU train functions
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
 void dA_get_hidden_values(dA*, int*, double*);
 void dA_get_reconstructed_input(dA*, double*, double*);
 
 
-// functions defined in this file are for intializing model
+// functions defined in this file are for intializing the autoencoder
 double uniform(double min, double max);
-void test_dbn(void);
-void dA__construct(dA*, int, int, int, double**, double*, double*);
-void dA__destruct(dA*);
-void dA_reconstruct(dA*, int*, double*);
-
-void dA_train_on_device(dA*, int*, double, double);
+void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, double *hbias, double *vbais);
+void dA__destruct(dA *model);
+void dA_reconstruct(dA *model, int *x, double *z);
+void test_dbn();
+void dA_train_on_device(dA *model, int **train_X, double learning_rate, double corruption_level);
 
 
 // Begin definign functions
@@ -88,8 +87,9 @@ void dA_reconstruct(dA* model, int *x, double *z) {
 }
 
 
-void dA_train_on_device(dA*, int*, double, double) {
+void dA_train_on_device(dA *model, int **train_X, double learning_rate, double corruption_level) {
   // call kernel function from here
+  // assign one observation to each thread
 }
 
 
@@ -122,15 +122,19 @@ void test_dbn(void) {
   };
 
   // construct dA
-  dA da;
-  dA__construct(&da, train_N, n_visible, n_hidden, NULL, NULL, NULL);
+  dA da_gold, da_h;
+  dA__construct(&da_gold, train_N, n_visible, n_hidden, NULL, NULL, NULL);
+  dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
 
   // train using gold standard
   for(epoch=0; epoch<training_epochs; epoch++) {
     for(i=0; i<train_N; i++) {
-      dA_train_gold(&da, train_X[i], learning_rate, corruption_level);
+      dA_train_gold(&da_gold, train_X[i], learning_rate, corruption_level);
     }
   }
+  
+  // train using kernel
+  dA_train_on_dev(da_h, train_X, learning_rate, corruption_level);
 
   // test data
   int test_X[2][20] = {
