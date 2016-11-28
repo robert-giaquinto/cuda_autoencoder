@@ -22,7 +22,7 @@ void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, do
 void dA__destruct(dA *model);
 void dA_reconstruct(dA *model, int *x, double *z);
 void test_dbn();
-void dA_train_on_device(dA *model, int **train_X, double learning_rate, double corruption_level);
+void dA_train_on_device(dA*, int*, double, double);
 
 
 // Begin definign functions
@@ -87,7 +87,7 @@ void dA_reconstruct(dA* model, int *x, double *z) {
 }
 
 
-void dA_train_on_device(dA *model, int **train_X, double learning_rate, double corruption_level) {
+void dA_train_on_device(dA *model, int train_X[][20], double learning_rate, double corruption_level) {
   // call kernel function from here
   // assign one observation to each thread
 }
@@ -134,7 +134,7 @@ void test_dbn(void) {
   }
   
   // train using kernel
-  dA_train_on_dev(da_h, train_X, learning_rate, corruption_level);
+  dA_train_on_device(&da_h, train_X, learning_rate, corruption_level);
 
   // test data
   int test_X[2][20] = {
@@ -146,7 +146,7 @@ void test_dbn(void) {
 
   // test
   for(i=0; i<test_N; i++) {
-    dA_reconstruct(&da, test_X[i], reconstructed_X[i]);
+    dA_reconstruct(&da_gold, test_X[i], reconstructed_X[i]);
     for(j=0; j<n_visible; j++) {
       printf("%.5f ", reconstructed_X[i][j]);
     }
@@ -155,7 +155,8 @@ void test_dbn(void) {
 
 
   // destruct dA
-  dA__destruct(&da);
+  dA__destruct(&da_gold);
+  dA__destruct(&da_h);
 }
 
 
