@@ -2,6 +2,7 @@
 
 Good reads
 https://cs224d.stanford.edu/reports/OshriBarak.pdf
+http://timdettmers.com/2014/10/09/deep-learning-data-parallelism/
 
 
 # Getting Started
