@@ -2,3 +2,9 @@
 
 Good reads
 https://cs224d.stanford.edu/reports/OshriBarak.pdf
+
+
+# Getting Started
+1. Unzip each of the MNIST data files via `gunzip <FILE NAME>`.
+2. Convert MNIST data from binary to a CSV file via `python convert_mnist_to_csv.py`
+
