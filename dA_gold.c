@@ -1,11 +1,79 @@
 #include <stdlib.h>
+#include <math.h>
 #include "dA.h"
 
 // export C interface
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
+void dA_get_corrupted_input(dA*, int*, int*, double);
+void dA_get_hidden_values(dA*, int*, double*);
+void dA_get_reconstructed_input(dA*, double*, double*);
+int binomial(int n, double p);
+double sigmoid(double x);
 
-// gold standard
+
+int binomial(int n, double p) {
+  if(p < 0 || p > 1) return 0;
+
+  int i;
+  int c = 0;
+  double r;
+
+  for(i=0; i<n; i++) {
+    r = rand() / (RAND_MAX + 1.0);
+    if (r < p) c++;
+  }
+
+  return c;
+}
+
+
+double sigmoid(double x) {
+  return 1.0 / (1.0 + exp(-x));
+}
+
+void dA_get_corrupted_input(dA* model, int *x, int *tilde_x, double p) {
+  int i;
+  for(i=0; i<model->n_visible; i++) {
+    if(x[i] == 0) {
+      tilde_x[i] = 0;
+    } else {
+      tilde_x[i] = binomial(1, p);
+    }
+  }
+}
+
+
+// Encode
+void dA_get_hidden_values(dA* model, int *x, double *y) {
+  int i,j;
+  for(i=0; i<model->n_hidden; i++) {
+    y[i] = 0;
+    for(j=0; j<model->n_visible; j++) {
+      y[i] += model->W[i][j] * x[j];
+    }
+    y[i] += model->hbias[i];
+    y[i] = sigmoid(y[i]);
+  }
+}
+
+
+// Decode
+void dA_get_reconstructed_input(dA* model, double *y, double *z) {
+  int i, j;
+  for(i=0; i<model->n_visible; i++) {
+    z[i] = 0;
+    for(j=0; j<model->n_hidden; j++) {
+      z[i] += model->W[j][i] * y[j];
+    }
+    z[i] += model->vbias[i];
+    z[i] = sigmoid(z[i]);
+  }
+}
+
+
+
+// Train for one observation
 void dA_train_gold(dA* model, int *x, double lr, double corruption_level) {
   int i, j;
 

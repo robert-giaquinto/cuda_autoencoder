@@ -12,33 +12,23 @@
 // declarations
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
+void dA_get_hidden_values(dA*, int*, double*);
+void dA_get_reconstructed_input(dA*, double*, double*);
 
 
+// functions defined in this file are for intializing model
+double uniform(double min, double max);
+void test_dbn(void);
+void dA__construct(dA*, int, int, int, double**, double*, double*);
+void dA__destruct(dA*);
+void dA_reconstruct(dA*, int*, double*);
+
+void dA_train_on_device(dA*, int*, double, double);
 
 
+// Begin definign functions
 double uniform(double min, double max) {
   return rand() / (RAND_MAX + 1.0) * (max - min) + min;
-}
-
-
-int binomial(int n, double p) {
-  if(p < 0 || p > 1) return 0;
-
-  int i;
-  int c = 0;
-  double r;
-
-  for(i=0; i<n; i++) {
-    r = rand() / (RAND_MAX + 1.0);
-    if (r < p) c++;
-  }
-
-  return c;
-}
-
-
-double sigmoid(double x) {
-  return 1.0 / (1.0 + exp(-x));
 }
 
 
@@ -79,48 +69,12 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
   }
 }
 
+
 void dA__destruct(dA* model) {
   free(model->W[0]);
   free(model->W);
   free(model->hbias);
   free(model->vbias);
-}
-
-void dA_get_corrupted_input(dA* model, int *x, int *tilde_x, double p) {
-  int i;
-  for(i=0; i<model->n_visible; i++) {
-    if(x[i] == 0) {
-      tilde_x[i] = 0;
-    } else {
-      tilde_x[i] = binomial(1, p);
-    }
-  }
-}
-
-// Encode
-void dA_get_hidden_values(dA* model, int *x, double *y) {
-  int i,j;
-  for(i=0; i<model->n_hidden; i++) {
-    y[i] = 0;
-    for(j=0; j<model->n_visible; j++) {
-      y[i] += model->W[i][j] * x[j];
-    }
-    y[i] += model->hbias[i];
-    y[i] = sigmoid(y[i]);
-  }
-}
-
-// Decode
-void dA_get_reconstructed_input(dA* model, double *y, double *z) {
-  int i, j;
-  for(i=0; i<model->n_visible; i++) {
-    z[i] = 0;
-    for(j=0; j<model->n_hidden; j++) {
-      z[i] += model->W[j][i] * y[j];
-    }
-    z[i] += model->vbias[i];
-    z[i] = sigmoid(z[i]);
-  }
 }
 
 
@@ -132,7 +86,6 @@ void dA_reconstruct(dA* model, int *x, double *z) {
 
   free(y);
 }
-
 
 
 void dA_train_on_device(dA*, int*, double, double) {
