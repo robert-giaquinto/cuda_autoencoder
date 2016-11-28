@@ -5,7 +5,7 @@
 #include "dA.h"
 
 
-__global__ void dA_train() {
+__global__ void dA_train(dA *model) {
   int i=0;
 }
 

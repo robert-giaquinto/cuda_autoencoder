@@ -9,7 +9,7 @@ EXECUTABLE	:= dA
 # Cuda source files (compiled with cudacc)
 CUFILES		:= dA.cu
 # C/C++ source files (compiled with gcc / c++)
-#CCFILES		:= dA.c
+CCFILES		:= dA_gold.c
 
 ################################################################################
 # Rules and targets
