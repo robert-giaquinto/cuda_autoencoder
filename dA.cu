@@ -9,6 +9,11 @@
 // includes, kernel
 #include <dA_kernel.cu>
 
+
+#define N_FEATS 20
+#define N_OBS 10
+
+
 // declarations for CPU train functions
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
@@ -87,9 +92,112 @@ void dA_reconstruct(dA* model, int *x, double *z) {
 }
 
 
-void dA_train_on_device(dA *model, int train_X[][20], double learning_rate, double corruption_level) {
+int* flatten_array(int arr[N_OBS][N_FEATS]) {
+  int *flat = (int *)malloc(sizeof(int) * N_OBS * N_FEATS);
+  for (int i=0; i < N_OBS; ++i) {
+    for (int j=0; j < N_FEATS; ++j) {
+      flat[i*N_FEATS + j] = arr[i][j];
+    }
+  }
+  return flat;
+}
+
+double* flatten_w(double **W, int n_visible, int n_hidden) {
+  double *flat = (double *)malloc(sizeof(double) * n_visible * n_hidden);
+  for (int i=0; i < n_visible; ++i) {
+    for (int j=0; j < n_hidden; ++j) {
+      flat[i*n_hidden + j] = W[i][j];
+    }
+  }
+  return flat;
+}
+
+int * allocate_device_x() {
+  int *x_d = NULL;
+  int size = N_OBS * N_FEATS * sizeof(int);
+  cudaMalloc((void**)&x_d, size);
+  return x_d;
+}
+
+dA* allocate_device_ae(dA *model_h) {
+  dA *model_d = model_h;
+  int W_size = sizeof(double) * model_h->n_hidden * model_h->n_visible;
+  int hbias_size = sizeof(double) * model_h->n_hidden;
+  int vbias_size = sizeof(double) * model_h->n_visible;
+  cudaMalloc((void**)&model_d->W, W_size);
+  cudaMalloc((void**)&model_d->hbias, hbias_size);
+  cudaMalloc((void**)&model_d->vbias, vbias_size);
+  return model_d;
+}
+
+void copy_x_to_device(int *x_d, int *x_h) {
+  int size = N_OBS * N_FEATS * sizeof(int);
+  cudaMemcpy(x_d, x_h, size, cudaMemcpyHostToDevice);
+}
+
+void copy_ae_to_device(dA* model_d, dA* model_h) {
+  // flatten W before copying it over
+  double *flat_w = flatten_w(model_h->W, model_h->n_visible, model_h->n_hidden);
+  int W_size = sizeof(double) * model_h->n_hidden * model_h->n_visible;
+  int hbias_size = sizeof(double) * model_h->n_hidden;
+  int vbias_size = sizeof(double) * model_h->n_visible;
+  model_d->N = model_h->N;
+  model_d->n_visible = model_h->n_visible;
+  model_d->n_hidden = model_h->n_hidden;
+  cudaMemcpy(model_d->W, flat_w, W_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(model_d->hbias, model_h->hbias, hbias_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(model_d->vbias, model_h->vbias, vbias_size, cudaMemcpyHostToDevice);
+  free(flat_w);
+}
+
+void copy_ae_from_device(dA *model_h, dA *model_d) {
+  int W_size = sizeof(double) * model_h->n_hidden * model_h->n_visible;
+  int hbias_size = sizeof(double) * model_h->n_hidden;
+  int vbias_size = sizeof(double) * model_h->n_visible;
+  cudaMemcpy(model_h->W, model_d->W, W_size, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->hbias, model_d->hbias, hbias_size, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->vbias, model_d->vbias, vbias_size, cudaMemcpyDeviceToHost);
+}
+
+void free_device(dA *model) {
+  cudaFree(model->W);
+  cudaFree(model->hbias);
+  cudaFree(model->vbias);
+  model->W = NULL;
+  model->hbias = NULL;
+  model->vbias = NULL;
+}
+  
+
+void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rate, double corruption_level) {
   // call kernel function from here
-  // assign one observation to each thread
+  // assign one observation to each block, each thread parallelizes a feature
+  
+  // flatten input array
+  int *X_h = flatten_array(train_X);
+
+  // allocate space on device
+  int *X_d = allocate_device_x();
+  dA *model_d = allocate_device_ae(model_h);
+
+  // copy data over to device
+  copy_x_to_device(X_d, X_h);
+  copy_ae_to_device(model_d, model_h);
+
+  
+  // define kernel dimensions
+  int batch_size = 1;
+  dim3 dim_grid(batch_size, 1, 1);
+  dim3 dim_block(N_FEATS, 1, 1);
+  //dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level);
+  cudaDeviceSynchronize();
+  
+  // read results from device
+  copy_ae_from_device(model_h, model_d);
+
+  // free up memory
+  free(X_h);
+  free_device(model_d);
 }
 
 
