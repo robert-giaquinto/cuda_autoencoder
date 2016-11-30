@@ -219,12 +219,12 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   dim3 dimGrid2(1);
   dim3 dimBlock2(BATCHSIZE);
   int ib=0;
-  for (ib=0; ib<n_batches;ib++) 
+  for (ib=0; ib<n_batches;ib++) {
      //2. encode to get hidden values y
      dA_get_hidden_values_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias, tilde_x_d,y_d,ib,BATCHSIZE);
      //3.decode by reconstrution to get z
      dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
-
+  }
   cudaMemcpy(y_h, y_d,sizeof(double) * N_HIDDEN * N_OBS, cudaMemcpyDeviceToHost);
   cudaMemcpy(z_h, z_d,sizeof(double) * N_FEATS * N_OBS, cudaMemcpyDeviceToHost);
   cudaDeviceSynchronize();
