@@ -6,6 +6,7 @@ typedef struct {
   int n_visible;
   int n_hidden;
   double **W;
+  double *W_flat;
   double *hbias;
   double *vbias;
 } dA;

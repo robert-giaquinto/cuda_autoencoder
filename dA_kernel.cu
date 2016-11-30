@@ -9,7 +9,7 @@
 
 #define RANDOM_MAX 100
 
-__global__ void dA_train_kernel();
+__global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level);
 __device__ int binomial_kernel(int n, double p);
 __device__ double sigmoid_kernel(double x);
 __device__ void dA_get_corrupted_input_kernel(dA *model, int *x, int *tilde_x, double p);
@@ -22,8 +22,9 @@ __device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *
 // train functions called from host:
 
 // 1. using global memory
-__global__ void dA_train_kernel() {
-
+__global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level) {
+  da.hbias[0] = 999.0;
+  da.W_flat[0] = 999.0;
 }
 
 

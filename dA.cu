@@ -27,7 +27,7 @@ void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, do
 void dA__destruct(dA *model);
 void dA_reconstruct(dA *model, int *x, double *z);
 void test_dbn();
-void dA_train_on_device(dA*, int*, double, double);
+void dA_train_on_device(dA*, int[][N_FEATS], double, double);
 
 
 // Begin definign functions
@@ -46,12 +46,15 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
 
   if(W == NULL) {
     model->W = (double **)malloc(sizeof(double*) * n_hidden);
+    model->W_flat = (double*)malloc(sizeof(double)*n_hidden*n_visible);
     model->W[0] = (double *)malloc(sizeof(double) * n_visible * n_hidden);
     for(i=0; i<n_hidden; i++) model->W[i] = model->W[0] + i * n_visible;
 
     for(i=0; i<n_hidden; i++) {
       for(j=0; j<n_visible; j++) {
-        model->W[i][j] = uniform(-a, a);
+        double u = uniform(-a, a);
+        model->W_flat[i*n_visible + j] = u;
+        model->W[i][j] = u;
       }
     }
   } else {
@@ -77,6 +80,7 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
 void dA__destruct(dA* model) {
   free(model->W[0]);
   free(model->W);
+  free(model->W_flat);
   free(model->hbias);
   free(model->vbias);
 }
@@ -104,9 +108,9 @@ int* flatten_array(int arr[N_OBS][N_FEATS]) {
 
 double* flatten_w(double **W, int n_visible, int n_hidden) {
   double *flat = (double *)malloc(sizeof(double) * n_visible * n_hidden);
-  for (int i=0; i < n_visible; ++i) {
-    for (int j=0; j < n_hidden; ++j) {
-      flat[i*n_hidden + j] = W[i][j];
+  for (int i=0; i < n_hidden; ++i) {
+    for (int j=0; j < n_visible; ++j) {
+      flat[i*n_visible + j] = W[i][j];
     }
   }
   return flat;
@@ -119,14 +123,34 @@ int * allocate_device_x() {
   return x_d;
 }
 
-dA* allocate_device_ae(dA *model_h) {
-  dA *model_d = model_h;
-  int W_size = sizeof(double) * model_h->n_hidden * model_h->n_visible;
-  int hbias_size = sizeof(double) * model_h->n_hidden;
-  int vbias_size = sizeof(double) * model_h->n_visible;
-  cudaMalloc((void**)&model_d->W, W_size);
-  cudaMalloc((void**)&model_d->hbias, hbias_size);
-  cudaMalloc((void**)&model_d->vbias, vbias_size);
+dA init_device_ae(const dA model_h) {
+  // allocate space
+  dA model_d;
+  model_d.N = model_h.N;
+  model_d.n_visible = model_h.n_visible;
+  model_d.n_hidden = model_h.n_hidden;
+  model_d.hbias = NULL;
+  model_d.vbias = NULL;
+  model_d.W = NULL;
+  model_d.W_flat = NULL;
+
+  int W_size = sizeof(double) * model_h.n_hidden * model_h.n_visible;
+  int hbias_size = sizeof(double) * model_h.n_hidden;
+  int vbias_size = sizeof(double) * model_h.n_visible;
+
+  cudaMalloc((void**)&model_d.W_flat, W_size);
+  cudaMalloc((void**)&model_d.hbias, hbias_size);
+  cudaMalloc((void**)&model_d.vbias, vbias_size);
+
+  // flatten w
+  //double *flat_w = flatten_w(model_h.W, model_h.n_visible, model_h.n_hidden);
+
+  // copy over data
+  cudaMemcpy(model_d.W_flat, model_h.W_flat, W_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(model_d.hbias, model_h.hbias, hbias_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(model_d.vbias, model_h.vbias, vbias_size, cudaMemcpyHostToDevice);
+  
+  //free(flat_w);
   return model_d;
 }
 
@@ -135,35 +159,22 @@ void copy_x_to_device(int *x_d, int *x_h) {
   cudaMemcpy(x_d, x_h, size, cudaMemcpyHostToDevice);
 }
 
-void copy_ae_to_device(dA* model_d, dA* model_h) {
-  // flatten W before copying it over
-  double *flat_w = flatten_w(model_h->W, model_h->n_visible, model_h->n_hidden);
-  int W_size = sizeof(double) * model_h->n_hidden * model_h->n_visible;
-  int hbias_size = sizeof(double) * model_h->n_hidden;
-  int vbias_size = sizeof(double) * model_h->n_visible;
-  model_d->N = model_h->N;
-  model_d->n_visible = model_h->n_visible;
-  model_d->n_hidden = model_h->n_hidden;
-  cudaMemcpy(model_d->W, flat_w, W_size, cudaMemcpyHostToDevice);
-  cudaMemcpy(model_d->hbias, model_h->hbias, hbias_size, cudaMemcpyHostToDevice);
-  cudaMemcpy(model_d->vbias, model_h->vbias, vbias_size, cudaMemcpyHostToDevice);
-  free(flat_w);
-}
 
-void copy_ae_from_device(dA *model_h, dA *model_d) {
+void copy_ae_from_device(dA *model_h, const dA model_d) {
   int W_size = sizeof(double) * model_h->n_hidden * model_h->n_visible;
   int hbias_size = sizeof(double) * model_h->n_hidden;
   int vbias_size = sizeof(double) * model_h->n_visible;
-  cudaMemcpy(model_h->W, model_d->W, W_size, cudaMemcpyDeviceToHost);
-  cudaMemcpy(model_h->hbias, model_d->hbias, hbias_size, cudaMemcpyDeviceToHost);
-  cudaMemcpy(model_h->vbias, model_d->vbias, vbias_size, cudaMemcpyDeviceToHost);
+
+  cudaMemcpy(model_h->W_flat, model_d.W_flat, W_size, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->hbias, model_d.hbias, hbias_size, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->vbias, model_d.vbias, vbias_size, cudaMemcpyDeviceToHost);
 }
 
 void free_device(dA *model) {
-  cudaFree(model->W);
+  cudaFree(model->W_flat);
   cudaFree(model->hbias);
   cudaFree(model->vbias);
-  model->W = NULL;
+  model->W_flat = NULL;
   model->hbias = NULL;
   model->vbias = NULL;
 }
@@ -178,18 +189,17 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
 
   // allocate space on device
   int *X_d = allocate_device_x();
-  dA *model_d = allocate_device_ae(model_h);
+  dA model_d = init_device_ae(*model_h);
 
   // copy data over to device
   copy_x_to_device(X_d, X_h);
-  copy_ae_to_device(model_d, model_h);
+  //  copy_ae_to_device(model_d, model_h);
 
-  
   // define kernel dimensions
   int batch_size = 1;
   dim3 dim_grid(batch_size, 1, 1);
   dim3 dim_block(N_FEATS, 1, 1);
-  //dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level);
+  dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level);
   cudaDeviceSynchronize();
   
   // read results from device
@@ -197,7 +207,7 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
 
   // free up memory
   free(X_h);
-  free_device(model_d);
+  free_device(&model_d);
 }
 
 
@@ -242,7 +252,9 @@ void test_dbn(void) {
   }
   
   // train using kernel
+  printf("\nBefore: %f, %f", da_h.W_flat[0], da_h.hbias[0]);
   dA_train_on_device(&da_h, train_X, learning_rate, corruption_level);
+  printf("\nAfter: %f, %f\n", da_h.W_flat[0], da_h.hbias[0]);
 
   // test data
   int test_X[2][20] = {
