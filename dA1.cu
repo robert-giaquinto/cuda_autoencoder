@@ -131,6 +131,15 @@ double * allocate_device_y(int obs, int n_hidden) {
   cudaMalloc((void**)&y_d, size);
   return y_d;
 }
+
+
+double * allocate_device_z() {
+  double *z_d = NULL;
+  int size = N_OBS * N_FEATS* sizeof(double);
+  cudaMalloc((void**)&z_d, size);
+  return z_d;
+}
+
 double*  allocate_device_dW() {
   double *dW_flat;
   int dW_size = sizeof(double) * N_HIDDEN * N_FEATS;
@@ -176,12 +185,15 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   // allocate space on device
   int *X_d = allocate_device_x();
   int *tilde_x_d = allocate_device_x();
-  double *y_d = allocate_device_y(N_OBS, 5); 
+  double *y_h = (double*)malloc(sizeof(double)* N_HIDDEN * N_OBS);
+  double *y_d = allocate_device_y(N_OBS, N_HIDDEN); 
   double *hW_flat = (double*)malloc(sizeof(double)* N_HIDDEN * N_FEATS);
   double *dW_flat = allocate_device_dW();
   double *dhbias = allocate_device_dhbias();
   double *dvbias = allocate_device_dvbias(); 
-
+  double *z_d = allocate_device_z();
+  double *z_h = (double*)malloc(sizeof(double)* N_FEATS * N_OBS);
+  
   // copy data over to device
   copy_x_to_device(X_d, X_h);
   copy_x_to_device(tilde_x_d, X_h);
@@ -203,21 +215,23 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
 
   int n_batches = ceil(N_OBS / BATCHSIZE); 
   //printf("tilde_x %d %d",X_h[1],X_h[2]);
-  //2. encode
+  //2. encode to get hidden values y
   dim3 dimGrid2(1);
   dim3 dimBlock2(BATCHSIZE);
   int ib=0;
   for (ib=0; ib<n_batches;ib++) 
-     dA_get_hidden_values_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias, tilde_x_d, y_d,ib,BATCHSIZE);
+     //2. encode to get hidden values y
+     dA_get_hidden_values_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias, tilde_x_d,y_d,ib,BATCHSIZE);
+     //3.decode by reconstrution to get z
+     dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
 
-  cudaMemcpy(hW_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(y_h, y_d,sizeof(double) * N_HIDDEN * N_OBS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(z_h, z_d,sizeof(double) * N_FEATS * N_OBS, cudaMemcpyDeviceToHost);
   cudaDeviceSynchronize();
  
   printf("ibb is %d",ib);
-  printf("\nW : %f\n",hW_flat[0]);
-
-  //for (int i=0; i < n_batches; i++)
-  //    dA_get_corrupted_input_kernel
+  printf("\ny : %f %f %f\n",y_h[0],y_h[3],y_h[7]);
+  printf("\nz : %f %f %f\n",z_h[0],z_h[3],z_h[7]);
 
 
   /*

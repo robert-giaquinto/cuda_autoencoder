@@ -15,8 +15,9 @@ __device__ double sigmoid_kernel(double x);
 __global__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p);
 __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *dW, double *dhbias,
 				 int *x, double *y, int ib, int batchsize);
-__device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
-
+//__device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
+__global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
+				 double *z, double *y, int ib, int batchsize);
 
 
 /////////////////////////////////////////////////////////////////
@@ -81,10 +82,10 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *
   // We have weight matrix which is fixed n_hidden x n_feats
   // [batchsize][y[n_hidden] = w[hidden][n_feats] * x[n_feats] + hbias[n_hidden]] 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
-  int shiftYIdx = (ib * batchsize + idx)*n_hidden ;
-  int shiftXIdx = (ib * batchsize + idx)*n_visible;
+  int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden ;
+  int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
   //dW[0] = 11.0;
-  if (idx < batchsize) {
+  if (threadIdx.x < batchsize) {
     int i,j;
     for (i=0; i< n_hidden; i++) {
       y[shiftYIdx+i] = 0;
@@ -93,7 +94,7 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *
       }
       y[shiftYIdx+i] += dhbias[i];
       y[shiftYIdx+i] = sigmoid_kernel(y[shiftYIdx+i]);
-      dW[0] = shiftYIdx+i;
+      //dW[0] = shiftYIdx+i;
     }
   }
   __syncthreads();
@@ -101,7 +102,27 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *
 }
 
 
-__device__ void dA_get_reconstructed_input_kernel(dA* model, double *y, double *z) {
+__global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
+				 double *z, double *y, int ib, int batchsize) {
+
+  int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
+  int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden ;
+  int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
+
+  if (threadIdx.x < batchsize)  {
+  int i, j;
+  for(i=0; i<n_visible; i++) {
+    z[shiftZIdx+i] = 0;
+    for(j=0; j<n_hidden; j++) {
+      z[shiftZIdx+i] += dW[j*n_hidden+i] * y[shiftYIdx+j];
+    }
+    z[shiftZIdx+i] += dvbias[i];
+    z[shiftZIdx+i] = sigmoid_kernel(z[shiftZIdx+i]);
+  }
+  }
+
+  z[0] = 1.2;
+  __syncthreads();
 
 }
 
