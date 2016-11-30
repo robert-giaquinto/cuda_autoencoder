@@ -18,10 +18,25 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *
 //__device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize);
-
-
+__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr);
 /////////////////////////////////////////////////////////////////
 // train functions called from host:
+
+__device__ double atomicAdd(double* address, double val)
+{
+    unsigned long long int* address_as_ull =
+                             (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do {
+        assumed = old;
+old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(val +
+                               __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+
+
 
 // 1. using global memory
 __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level) {
@@ -121,8 +136,30 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
   }
   }
 
-  z[0] = 1.2;
+  //z[0] = 1.2;
   __syncthreads();
+
+}
+
+
+__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr) {
+
+  int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
+  //double L_vbias[20];
+  int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  double templvbias = 0.0;
+  if (threadIdx.x < batchsize)  {
+     for(int i=0; i<n_visible; i++) {
+	//templvbias = 1.23;
+	templvbias = x[shiftXIdx + i] * 1.0 - z[shiftZIdx + i];
+    	//L_vbias[i] = 1.23; //(double) x[shiftXIdx.x + i] - z[shiftZIdx.x + i];
+    	//model->vbias[i] += lr * L_vbias[i] / model->N;
+	atomicAdd(&dL_vbias[i], templvbias );
+     }
+  }
+
+  //__syncthreads();
 
 }
 
