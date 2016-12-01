@@ -12,7 +12,7 @@
 
 #define N_FEATS 20
 #define N_OBS 10
-#define BATCHSIZE 5
+#define BATCHSIZE 1
 #define N_HIDDEN 5
 
 // declarations for CPU train functions
@@ -133,9 +133,9 @@ double * allocate_device_y(int obs, int n_hidden) {
 }
 
 
-double * allocate_device_z() {
+double * allocate_device_z(int m, int n) {
   double *z_d = NULL;
-  int size = N_OBS * N_FEATS* sizeof(double);
+  int size = m * n * sizeof(double);
   cudaMalloc((void**)&z_d, size);
   return z_d;
 }
@@ -162,16 +162,16 @@ double* allocate_device_dvbias() {
   return dvbias;  
 }
 
-double* allocate_device_dL_vbias() {
+double* allocate_device_dL_vbias(int m, int n) {
   double *dL_vbias;
-  int dL_vbias_size = sizeof(double) * N_OBS * N_FEATS;
+  int dL_vbias_size = sizeof(double) * m * n;
   cudaMalloc((void**)&dL_vbias, dL_vbias_size);
   return dL_vbias;  
 }
 
-double* allocate_device_dL_hbias() {
+double* allocate_device_dL_hbias(int m,int n) {
   double *dL_hbias;
-  int dL_hbias_size = sizeof(double) * N_OBS * N_HIDDEN;
+  int dL_hbias_size = sizeof(double) * m * n;
   cudaMalloc((void**)&dL_hbias, dL_hbias_size);
   return dL_hbias;  
 }
@@ -193,19 +193,19 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   // allocate space on device
   int *X_d = allocate_device_x();
   int *tilde_x_d = allocate_device_x();
-  double *y_h = (double*)malloc(sizeof(double)* N_HIDDEN * N_OBS);
-  double *y_d = allocate_device_y(N_OBS, N_HIDDEN); 
+  double *y_h = (double*)malloc(sizeof(double)* BATCHSIZE * N_HIDDEN);
+  double *y_d = allocate_device_y(BATCHSIZE, N_HIDDEN); 
   double *hW_flat = (double*)malloc(sizeof(double)* N_HIDDEN * N_FEATS);
   double *dW_flat = allocate_device_dW();
   double *dhbias = allocate_device_dhbias();
   double *dvbias = allocate_device_dvbias(); 
-  double *z_d = allocate_device_z();
-  double *z_h = (double*)malloc(sizeof(double)* N_FEATS * N_OBS);
+  double *z_d = allocate_device_z(BATCHSIZE, N_FEATS);
+  double *z_h = (double*)malloc(sizeof(double)* BATCHSIZE* N_FEATS);
   //
-  double *L_vbias = (double *)malloc(sizeof(double) * N_OBS * N_FEATS);
-  double *dL_vbias = allocate_device_dL_vbias();
-  double *L_hbias = (double *)malloc(sizeof(double) * N_OBS * N_HIDDEN);
-  double *dL_hbias = allocate_device_dL_hbias();
+  double *L_vbias = (double *)malloc(sizeof(double) * BATCHSIZE * N_FEATS);
+  double *dL_vbias = allocate_device_dL_vbias(BATCHSIZE,N_FEATS);
+  double *L_hbias = (double *)malloc(sizeof(double) * BATCHSIZE * N_HIDDEN);
+  double *dL_hbias = allocate_device_dL_hbias(BATCHSIZE, N_HIDDEN);
   //
 
   // copy data over to device
@@ -264,16 +264,12 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   model_h->W_flat = hW_flat;
   // read results from device
   // free up memory
-  free(X_h);
   cudaFree(X_d);
   cudaFree(tilde_x_d);
-  //free(hW_flat);
   cudaFree(dW_flat);
   cudaFree(dhbias);
   cudaFree(dvbias);
-  free(L_vbias);
   cudaFree(dL_vbias);
-  free(L_hbias);
   cudaFree(dL_hbias);
   
 }
@@ -318,12 +314,13 @@ void test_dbn(void) {
     }
   }
   
+  //* Start of GPU Code
   // train using kernel
-  printf("\nBefore: %f, %f", da_h.W_flat[0], da_h.hbias[0]);
   //dA_train_on_device(&da_h, train_X, learning_rate, corruption_level);
   dA_train_on_device1(&da_h, train_X, learning_rate, corruption_level);
-  printf("\nAfter: %f, %f\n", da_h.W_flat[0], da_h.hbias[0]);
-
+  printf("\nCPU : %f, %f, %f\n", da_gold.W_flat[0], da_gold.W_flat[1], da_gold.hbias[0]);
+  printf("\nGPU : %f, %f, %f\n", da_h.W_flat[0], da_h.W_flat[1], da_h.hbias[0]);
+  //*End of GPU Coode
   // test data
   int test_X[2][20] = {
     {1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
