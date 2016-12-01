@@ -19,6 +19,8 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize);
 __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr);
+__global__ void dA_L_hbias_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+		int ib, int batchsize,double lr);
 /////////////////////////////////////////////////////////////////
 // train functions called from host:
 
@@ -145,23 +147,35 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
 __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr) {
 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
-  //double L_vbias[20];
   int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
   int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
   double templvbias = 0.0;
   if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_visible; i++) {
-	//templvbias = 1.23;
 	templvbias = x[shiftXIdx + i] * 1.0 - z[shiftZIdx + i];
-    	//L_vbias[i] = 1.23; //(double) x[shiftXIdx.x + i] - z[shiftZIdx.x + i];
-    	//model->vbias[i] += lr * L_vbias[i] / model->N;
-	atomicAdd(&dL_vbias[i], templvbias );
+	atomicAdd(&dL_vbias[i], (lr*templvbias / N) );
      }
   }
-
   //__syncthreads();
-
 }
 
+__global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+		int ib, int batchsize,double lr) {
+
+  int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
+  int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden;
+  double templhbias;
+  if (threadIdx.x < batchsize)  {
+     for(int i=0; i<n_hidden; i++) {
+	templhbias = 0.0;
+	for (int j=0;j<n_visible;j++){
+	  templhbias += dW[i*n_hidden+j] * dL_vbias[j];
+	}
+	templhbias *= y[shiftYIdx+i]*(1-y[shiftYIdx+i]);
+	atomicAdd(&dL_hbias[i], templhbias );
+     }
+  }
+  //__syncthreads();
+}
 
 #endif // #ifndef _DA_KERNEL_H_

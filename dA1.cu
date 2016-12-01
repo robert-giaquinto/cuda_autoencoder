@@ -169,6 +169,13 @@ double* allocate_device_dL_vbias() {
   return dL_vbias;  
 }
 
+double* allocate_device_dL_hbias() {
+  double *dL_hbias;
+  int dL_hbias_size = sizeof(double) * N_HIDDEN;
+  cudaMalloc((void**)&dL_hbias, dL_hbias_size);
+  return dL_hbias;  
+}
+
 void copy_x_to_device(int *x_d, int *x_h) {
   int size = N_OBS * N_FEATS * sizeof(int);
   cudaMemcpy(x_d, x_h, size, cudaMemcpyHostToDevice);
@@ -197,6 +204,8 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   //
   double *L_vbias = (double *)malloc(sizeof(double) * N_FEATS);
   double *dL_vbias = allocate_device_dL_vbias();
+  double *L_hbias = (double *)malloc(sizeof(double) * N_HIDDEN);
+  double *dL_hbias = allocate_device_dL_hbias();
   //
 
   // copy data over to device
@@ -230,18 +239,22 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
     dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
     //4. Update error in reconstruction - visible error for every minibatch by atomic add kernel
     dA_L_vbias_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,N_FEATS,X_d,z_d,ib,BATCHSIZE,learning_rate);
+    //5.Update error in hidden units outputs, we would use it to update weights
+    dA_L_hbias_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,dL_hbias,N_HIDDEN,N_FEATS,y_d,dW_flat,ib,BATCHSIZE,learning_rate);
+    //6. Weights updates
   }
   //
   cudaMemcpy(y_h, y_d,sizeof(double) * N_HIDDEN * N_OBS, cudaMemcpyDeviceToHost);
   cudaMemcpy(z_h, z_d,sizeof(double) * N_FEATS * N_OBS, cudaMemcpyDeviceToHost);
   cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
   cudaDeviceSynchronize();
  
-  printf("ibb is %d",ib);
-  printf("\ny : %f %f %f\n",y_h[0],y_h[3],y_h[7]);
-  printf("\nz : %f %f %f\n",z_h[0],z_h[3],z_h[7]);
+  printf("ibb is: %d",ib);
+  printf("\ny   : %f %f %f\n",y_h[0],y_h[3],y_h[7]);
+  printf("\nz   : %f %f %f\n",z_h[0],z_h[3],z_h[7]);
   printf("\nL_vbias : %f %f %f\n",L_vbias[0],L_vbias[1],L_vbias[2]);
-
+  printf("\nL_hbias : %f %f %f\n",L_hbias[0],L_hbias[1],L_hbias[2]);
 
   /*
   // define kernel dimensions
@@ -262,7 +275,8 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   cudaFree(dvbias);
   free(L_vbias);
   cudaFree(dL_vbias);
-  dL_vbias = NULL;
+  free(L_hbias);
+  cudaFree(dL_hbias);
   
 }
 
