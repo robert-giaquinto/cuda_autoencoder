@@ -164,14 +164,14 @@ double* allocate_device_dvbias() {
 
 double* allocate_device_dL_vbias() {
   double *dL_vbias;
-  int dL_vbias_size = sizeof(double) * N_FEATS;
+  int dL_vbias_size = sizeof(double) * N_OBS * N_FEATS;
   cudaMalloc((void**)&dL_vbias, dL_vbias_size);
   return dL_vbias;  
 }
 
 double* allocate_device_dL_hbias() {
   double *dL_hbias;
-  int dL_hbias_size = sizeof(double) * N_HIDDEN;
+  int dL_hbias_size = sizeof(double) * N_OBS * N_HIDDEN;
   cudaMalloc((void**)&dL_hbias, dL_hbias_size);
   return dL_hbias;  
 }
@@ -202,9 +202,9 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   double *z_d = allocate_device_z();
   double *z_h = (double*)malloc(sizeof(double)* N_FEATS * N_OBS);
   //
-  double *L_vbias = (double *)malloc(sizeof(double) * N_FEATS);
+  double *L_vbias = (double *)malloc(sizeof(double) * N_OBS * N_FEATS);
   double *dL_vbias = allocate_device_dL_vbias();
-  double *L_hbias = (double *)malloc(sizeof(double) * N_HIDDEN);
+  double *L_hbias = (double *)malloc(sizeof(double) * N_OBS * N_HIDDEN);
   double *dL_hbias = allocate_device_dL_hbias();
   //
 
@@ -238,16 +238,20 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
     //3.decode by reconstrution to get z
     dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
     //4. Update error in reconstruction - visible error for every minibatch by atomic add kernel
-    dA_L_vbias_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,N_FEATS,X_d,z_d,ib,BATCHSIZE,learning_rate);
+    dA_L_vbias_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,dvbias,N_FEATS,X_d,z_d,ib,BATCHSIZE,learning_rate);
     //5.Update error in hidden units outputs, we would use it to update weights
-    dA_L_hbias_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,dL_hbias,N_HIDDEN,N_FEATS,y_d,dW_flat,ib,BATCHSIZE,learning_rate);
-    //6. Weights updates
+    dA_L_hbias_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,dL_hbias,dhbias,N_HIDDEN,N_FEATS,y_d,dW_flat,ib,BATCHSIZE,learning_rate);
+    //6. Weights updates for minibatch
+    dA_W_kernel<<<dimGrid2,dimBlock2>>>(N_OBS,dL_vbias,dL_hbias,N_HIDDEN,N_FEATS,y_d,dW_flat,tilde_x_d,ib,BATCHSIZE,learning_rate);
   }
   //
   cudaMemcpy(y_h, y_d,sizeof(double) * N_HIDDEN * N_OBS, cudaMemcpyDeviceToHost);
   cudaMemcpy(z_h, z_d,sizeof(double) * N_FEATS * N_OBS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
+  cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * N_OBS*N_FEATS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * N_OBS*N_HIDDEN, cudaMemcpyDeviceToHost);
+  cudaMemcpy(hW_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
   cudaDeviceSynchronize();
  
   printf("ibb is: %d",ib);
@@ -255,21 +259,15 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   printf("\nz   : %f %f %f\n",z_h[0],z_h[3],z_h[7]);
   printf("\nL_vbias : %f %f %f\n",L_vbias[0],L_vbias[1],L_vbias[2]);
   printf("\nL_hbias : %f %f %f\n",L_hbias[0],L_hbias[1],L_hbias[2]);
-
-  /*
-  // define kernel dimensions
-  int batch_size = 1;
-  dim3 dim_grid(batch_size, 1, 1);
-  dim3 dim_block(N_FEATS, 1, 1);
-  dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level);
-  cudaDeviceSynchronize();
-  */
+  printf("\nWeights : %f %f %f\n",hW_flat[0],hW_flat[1],hW_flat[2]);
+  //
+  model_h->W_flat = hW_flat;
   // read results from device
   // free up memory
   free(X_h);
   cudaFree(X_d);
   cudaFree(tilde_x_d);
-  free(hW_flat);
+  //free(hW_flat);
   cudaFree(dW_flat);
   cudaFree(dhbias);
   cudaFree(dvbias);
@@ -337,6 +335,15 @@ void test_dbn(void) {
   // test
   for(i=0; i<test_N; i++) {
     dA_reconstruct(&da_gold, test_X[i], reconstructed_X[i]);
+    for(j=0; j<n_visible; j++) {
+      printf("%.5f ", reconstructed_X[i][j]);
+    }
+    printf("\n");
+  }
+
+  // test GPU
+  for(i=0; i<test_N; i++) {
+    dA_reconstruct(&da_h, test_X[i], reconstructed_X[i]);
     for(j=0; j<n_visible; j++) {
       printf("%.5f ", reconstructed_X[i][j]);
     }

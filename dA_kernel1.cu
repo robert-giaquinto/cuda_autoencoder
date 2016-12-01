@@ -18,9 +18,11 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *
 //__device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize);
-__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr);
-__global__ void dA_L_hbias_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr);
+__global__ void dA_L_hbias_kernel(int N, double *dL_vbias, double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW, 
 		int ib, int batchsize,double lr);
+__global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+		int *tilde_x, int ib, int batchsize,double lr);
 /////////////////////////////////////////////////////////////////
 // train functions called from host:
 
@@ -144,26 +146,29 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
 }
 
 
-__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr) {
+__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr) {
 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
   int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
   int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  int lvbiasIdx = (ib * batchsize + threadIdx.x)*n_visible;
   double templvbias = 0.0;
   if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_visible; i++) {
 	templvbias = x[shiftXIdx + i] * 1.0 - z[shiftZIdx + i];
-	atomicAdd(&dL_vbias[i], (lr*templvbias / N) );
+	dL_vbias[lvbiasIdx + i] = templvbias;
+	atomicAdd(&dvbias[i], (lr*templvbias / N) );
      }
   }
   //__syncthreads();
 }
 
-__global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+__global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW, 
 		int ib, int batchsize,double lr) {
 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
   int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden;
+  int lhbiasIdx = (ib * batchsize + threadIdx.x)*n_hidden;
   double templhbias;
   if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_hidden; i++) {
@@ -172,7 +177,29 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, int n
 	  templhbias += dW[i*n_hidden+j] * dL_vbias[j];
 	}
 	templhbias *= y[shiftYIdx+i]*(1-y[shiftYIdx+i]);
-	atomicAdd(&dL_hbias[i], templhbias );
+	dL_hbias[lhbiasIdx + i] = templhbias;
+	atomicAdd(&dhbias[i], (lr * templhbias/N) );
+     }
+  }
+  //__syncthreads();
+}
+
+__global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+		int *tilde_x, int ib, int batchsize,double lr) {
+
+  int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
+  int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden;
+  int shiftTildeXIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  int lhbiasIdx = (ib * batchsize + threadIdx.x)*n_hidden;
+  int lvbiasIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  double tempVal;
+  if (threadIdx.x < batchsize)  {
+     for(int i=0; i<n_hidden; i++) {
+	tempVal = 0.0;
+	for (int j=0;j<n_visible;j++){
+	  tempVal = lr*(dL_hbias[lhbiasIdx+i]*tilde_x[shiftTildeXIdx+j] + dL_vbias[lvbiasIdx+j]*y[shiftYIdx+i]) / N;
+	  atomicAdd(&dW[i*n_hidden+j], tempVal );
+	}
      }
   }
   //__syncthreads();
