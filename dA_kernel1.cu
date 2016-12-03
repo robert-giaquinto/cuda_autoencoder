@@ -13,8 +13,7 @@ __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double co
 __device__ int binomial_kernel(int n, double p);
 __device__ double sigmoid_kernel(double x);
 __global__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p);
-__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *dW, double *dhbias,
-				 int *x, double *y, int ib, int batchsize);
+__global__ void dA_get_hidValues_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib, int batchsize);
 //__device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize);
@@ -95,27 +94,41 @@ __device__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p
 }
 
 
-__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible,double *dW, double *dhbias,
-				 int *x, double *y, int ib, int batchsize) {
+__global__ void dA_get_hidValues_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib, int batchsize) {
 
   // We have weight matrix which is fixed n_hidden x n_feats
   // [batchsize][y[n_hidden] = w[hidden][n_feats] * x[n_feats] + hbias[n_hidden]] 
+  //*
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
   int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden ;
   int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
-  //dW[0] = 11.0;
-  if (threadIdx.x < batchsize) {
+  //int shiftXIdx = ib *n_visible;
+  shiftYIdx = 0;
+  shiftXIdx = 0;
+  //*/
+  //dW[0] = 101.0;//y[0] = 11.0;
+  //*
+  //if (threadIdx.x < batchsize) {
     int i,j;
+    double tempYi = 0.0;
     for (i=0; i< n_hidden; i++) {
-      y[shiftYIdx+i] = 0;
+      //y[shiftYIdx+i] = 0;
+      tempYi = 0.0;
       for (j=0; j< n_visible; j++) {
-        y[shiftYIdx+i] += dW[i*n_hidden+j] * x[shiftXIdx+j];
+        //y[shiftYIdx+i] += dW[i*n_hidden+j] * x[shiftXIdx+j];
+        tempYi += dW[i*n_hidden+j] * x[shiftXIdx+j];
+        //atomicAdd(&y[shiftYIdx+i] , dW[i*n_hidden+j] * x[shiftXIdx+j]);
       }
-      y[shiftYIdx+i] += dhbias[i];
-      y[shiftYIdx+i] = sigmoid_kernel(y[shiftYIdx+i]);
-      //dW[0] = shiftYIdx+i;
+      //y[shiftYIdx+i] += dhbias[i];
+      tempYi += dhbias[i];
+      //atomicAdd(&y[shiftYIdx+i], dhbias[i]);
+      //y[shiftYIdx+i] = sigmoid_kernel(y[shiftYIdx+i]);
+      y[i] = sigmoid_kernel(tempYi);
+      //y[shiftYIdx+i] = 0.1;
+      //y[shiftYIdx+i] = tempYi;
     }
-  }
+  //*/
+  //}
   __syncthreads();
 
 }
@@ -127,8 +140,11 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
   int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden ;
   int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
-
-  if (threadIdx.x < batchsize)  {
+  //
+  shiftYIdx = 0;
+  shiftZIdx = 0;
+  //
+  //if (threadIdx.x < batchsize)  {
   int i, j;
   for(i=0; i<n_visible; i++) {
     z[shiftZIdx+i] = 0;
@@ -138,7 +154,7 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
     z[shiftZIdx+i] += dvbias[i];
     z[shiftZIdx+i] = sigmoid_kernel(z[shiftZIdx+i]);
   }
-  }
+  //}
 
   //z[0] = 1.2;
   __syncthreads();
@@ -152,15 +168,18 @@ __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n
   int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
   int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
   int lvbiasIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  //shiftZIdx = 0;
+  //shiftXIdx = 0;
+  lvbiasIdx = 0;
   double templvbias = 0.0;
-  if (threadIdx.x < batchsize)  {
+  //if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_visible; i++) {
-	templvbias = x[shiftXIdx + i] * 1.0 - z[shiftZIdx + i];
+	templvbias = x[shiftXIdx + i] - z[shiftZIdx + i];
 	dL_vbias[lvbiasIdx + i] = templvbias;
-	atomicAdd(&dvbias[i], (lr*templvbias / N) );
+	dvbias[i] += (lr*templvbias / N);
      }
-  }
-  //__syncthreads();
+  //}
+  __syncthreads();
 }
 
 __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW, 
@@ -170,7 +189,9 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
   int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden;
   int lhbiasIdx = (ib * batchsize + threadIdx.x)*n_hidden;
   double templhbias;
-  if (threadIdx.x < batchsize)  {
+  shiftYIdx = 0;
+  lhbiasIdx = 0;
+  //if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_hidden; i++) {
 	templhbias = 0.0;
 	for (int j=0;j<n_visible;j++){
@@ -178,10 +199,11 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
 	}
 	templhbias *= y[shiftYIdx+i]*(1-y[shiftYIdx+i]);
 	dL_hbias[lhbiasIdx + i] = templhbias;
-	atomicAdd(&dhbias[i], (lr * templhbias/N) );
+	//atomicAdd(&dhbias[i], (lr * templhbias/N) );
+	dhbias[i] += (lr * templhbias/N);
      }
-  }
-  //__syncthreads();
+  //}
+  __syncthreads();
 }
 
 __global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
@@ -192,8 +214,11 @@ __global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidde
   int shiftTildeXIdx = (ib * batchsize + threadIdx.x)*n_visible;
   int lhbiasIdx = (ib * batchsize + threadIdx.x)*n_hidden;
   int lvbiasIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  lhbiasIdx = 0;
+  lvbiasIdx = 0;
+  shiftYIdx = 00;
   double tempVal;
-  if (threadIdx.x < batchsize)  {
+  //if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_hidden; i++) {
 	tempVal = 0.0;
 	for (int j=0;j<n_visible;j++){
@@ -201,8 +226,8 @@ __global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidde
 	  atomicAdd(&dW[i*n_hidden+j], tempVal );
 	}
      }
-  }
-  //__syncthreads();
+  //}
+  __syncthreads();
 }
 
 #endif // #ifndef _DA_KERNEL_H_
