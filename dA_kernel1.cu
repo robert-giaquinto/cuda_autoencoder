@@ -139,17 +139,17 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
   int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden ;
-  int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  int shiftZIdx = ib * batchsize *n_visible;
   //
   shiftYIdx = 0;
-  shiftZIdx = 0;
+  //shiftZIdx = 0;
   //
   //if (threadIdx.x < batchsize)  {
   int i, j;
   for(i=0; i<n_visible; i++) {
     z[shiftZIdx+i] = 0;
     for(j=0; j<n_hidden; j++) {
-      z[shiftZIdx+i] += dW[j*n_hidden+i] * y[shiftYIdx+j];
+      z[shiftZIdx+i] += dW[j*n_visible+i] * y[shiftYIdx+j];
     }
     z[shiftZIdx+i] += dvbias[i];
     z[shiftZIdx+i] = sigmoid_kernel(z[shiftZIdx+i]);
@@ -165,8 +165,8 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
 __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr) {
 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
-  int shiftZIdx = (ib * batchsize + threadIdx.x)*n_visible;
-  int shiftXIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  int shiftZIdx = ib * batchsize *n_visible;
+  int shiftXIdx = ib * batchsize*n_visible;
   int lvbiasIdx = (ib * batchsize + threadIdx.x)*n_visible;
   //shiftZIdx = 0;
   //shiftXIdx = 0;
@@ -175,8 +175,9 @@ __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n
   //if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_visible; i++) {
 	templvbias = x[shiftXIdx + i] - z[shiftZIdx + i];
-	dL_vbias[lvbiasIdx + i] = templvbias;
-	dvbias[i] += (lr*templvbias / N);
+	dL_vbias[i] = templvbias;
+	//dvbias[i] += (lr*templvbias / N);
+	atomicAdd(&dvbias[i],(lr*templvbias / N));
      }
   //}
   __syncthreads();
@@ -195,12 +196,12 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
      for(int i=0; i<n_hidden; i++) {
 	templhbias = 0.0;
 	for (int j=0;j<n_visible;j++){
-	  templhbias += dW[i*n_hidden+j] * dL_vbias[j];
+	  templhbias += dW[i*n_visible+j] * dL_vbias[j];
 	}
-	templhbias *= y[shiftYIdx+i]*(1-y[shiftYIdx+i]);
-	dL_hbias[lhbiasIdx + i] = templhbias;
-	//atomicAdd(&dhbias[i], (lr * templhbias/N) );
-	dhbias[i] += (lr * templhbias/N);
+	templhbias *= y[i]*(1-y[i]);
+	dL_hbias[i] = templhbias;
+	atomicAdd(&dhbias[i], (lr * templhbias/N) );
+	//dhbias[i] += (lr * templhbias/N);
      }
   //}
   __syncthreads();
@@ -211,23 +212,26 @@ __global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidde
 
   int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
   int shiftYIdx = (ib * batchsize + threadIdx.x)*n_hidden;
-  int shiftTildeXIdx = (ib * batchsize + threadIdx.x)*n_visible;
+  int shiftTildeXIdx = ib * batchsize *  n_visible;
   int lhbiasIdx = (ib * batchsize + threadIdx.x)*n_hidden;
   int lvbiasIdx = (ib * batchsize + threadIdx.x)*n_visible;
   lhbiasIdx = 0;
   lvbiasIdx = 0;
-  shiftYIdx = 00;
+  shiftYIdx = 0;
   double tempVal;
   //if (threadIdx.x < batchsize)  {
      for(int i=0; i<n_hidden; i++) {
 	tempVal = 0.0;
 	for (int j=0;j<n_visible;j++){
-	  tempVal = lr*(dL_hbias[lhbiasIdx+i]*tilde_x[shiftTildeXIdx+j] + dL_vbias[lvbiasIdx+j]*y[shiftYIdx+i]) / N;
-	  atomicAdd(&dW[i*n_hidden+j], tempVal );
+	  //tempVal = lr * (dL_hbias[lhbiasIdx+i]*tilde_x[shiftTildeXIdx+j] + dL_vbias[lvbiasIdx+j]*y[shiftYIdx+i]) / N;
+	  tempVal = lr * (dL_hbias[i]*tilde_x[shiftTildeXIdx+j] + dL_vbias[j]*y[i]) / N;
+  	  //tempVal = 0.01;
+	  //atomicAdd(&dW[i*n_hidden+j], tempVal );
+	  atomicAdd(&dW[i*n_visible+j], tempVal);
 	}
      }
   //}
-  __syncthreads();
+  //__syncthreads();
 }
 
 #endif // #ifndef _DA_KERNEL_H_
