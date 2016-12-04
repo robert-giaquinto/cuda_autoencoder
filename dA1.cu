@@ -178,9 +178,13 @@ void copy_x_to_host(int *x_d, int *x_h) {
   cudaMemcpy(x_h, x_d, size, cudaMemcpyDeviceToHost);
 }
 
-void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learning_rate, double corruption_level) {
+void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learning_rate, double corruption_level,int training_epochs) {
   //
   cudaError_t cuda_ret;
+  int epoch;
+
+  printf("\nin device processing..."); 
+  double p = 1 - corruption_level;  
 
   // flatten input array
   int *X_h = flatten_array(train_X);
@@ -212,72 +216,75 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double learni
   cudaMemcpy(dW_flat, model_h->W_flat, sizeof(double)*N_HIDDEN*N_FEATS, cudaMemcpyHostToDevice);
   cudaMemcpy(dhbias, model_h->hbias, sizeof(double)*N_HIDDEN, cudaMemcpyHostToDevice);
   cudaMemcpy(dvbias, model_h->vbias, sizeof(double)*N_FEATS, cudaMemcpyHostToDevice);
-  //  copy_ae_to_device(model_d, model_h);
-
-  printf("\nin device processing..."); 
-  double p = 1 - corruption_level;  
-
-  //1. set up corrupted input for all together
+  
   printf("X_h %d %d",X_h[1],X_h[2]);
-  dim3 dimGrid1(1);
-  dim3 dimBlock1(N_OBS*N_FEATS);
-  dA_get_corrupted_input_kernel<<<dimGrid1, dimBlock1>>>(N_OBS*N_FEATS, tilde_x_d, p);
-  //cudaMemcpy(X_h, tilde_x, sizeof(int) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
-  //copy_x_to_host(tilde_x, X_h);
+  
+  for(epoch=0; epoch<training_epochs; epoch++) {
+	//  copy_ae_to_device(model_d, model_h);
 
-  cudaDeviceSynchronize();
-  //
-  int n_batches = ceil(N_OBS / BATCHSIZE); 
-  printf("Batches %d %d",BATCHSIZE,n_batches);
-  //2. encode to get hidden values y
-  dim3 dimGrid2(1);
-  dim3 dimBlock2(BATCHSIZE);
-  //dim3 dimBlock2(1);
-  printf("\n N : %d",model_h->N);
-  int ib=0;
-  //n_batches = 1;
-  for (ib=0; ib<n_batches;ib++) {
-    //2. encode to get hidden values y
-    dA_get_hidValues_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias,tilde_x_d,y_d,ib,BATCHSIZE);
-    //3.decode by reconstrution to get z
-    dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
-    //4. Update error in reconstruction - visible error for every minibatch by atomic add kernel
-    dA_L_vbias_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dvbias,N_FEATS,X_d,z_d,ib,BATCHSIZE,learning_rate);
-    //5.Update error in hidden units outputs, we would use it to update weights
-    dA_L_hbias_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dL_hbias,dhbias,N_HIDDEN,N_FEATS,y_d,dW_flat,ib,BATCHSIZE,learning_rate);
-    //6. Weights updates for minibatch
-    dA_W_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dL_hbias,model_h->n_hidden,model_h->n_visible,y_d,dW_flat,tilde_x_d,ib,BATCHSIZE,learning_rate);
-  }
-  //
-  cuda_ret = cudaDeviceSynchronize();
-  if (cuda_ret != cudaSuccess)
-    printf("Error in kernel");
-  //
-  cudaMemcpy(tilde_x_h, tilde_x_d,sizeof(double) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(y_h, y_d,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
-  cudaMemcpy(z_h, z_d,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
-  cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
-  cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
-  ///cudaDeviceSynchronize();
-  //
-  printf("ibb is: %d\n",ib);
-  for(int i=0;i<N_OBS;i++) {
-    printf("\ntile_x_h : "); for(int j=0;j<5;j++){ printf(" %f ",tilde_x_h[i*N_OBS+j]); }
-  }
-  printf("\ny_h : "); for(int j=0;j<5;j++){ printf(" %f ",y_h[j]); }
-  //for(int i=0;i<N_OBS;i++) {
-  printf("\nz_h: "); for(int j=0;j<5;j++){ printf(" %f ",z_h[j]); }
-  //}
-  printf("\nh vbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->vbias[j]); }
-  printf("\nh hbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->hbias[j]); }
-  printf("\nh Weights: ");for(int j=0;j<5;j++){ printf(" %f ",model_h->W_flat[j]); }
-  //
-  //model_h->W_flat = hW_flat;
-  // read results from device
+  	//1. set up corrupted input for all together
+  	dim3 dimGrid1(1);
+     	dim3 dimBlock1(N_OBS*N_FEATS);
+     	dA_get_corrupted_input_kernel<<<dimGrid1, dimBlock1>>>(N_OBS*N_FEATS, tilde_x_d, p);
+  	//cudaMemcpy(X_h, tilde_x, sizeof(int) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
+  	//copy_x_to_host(tilde_x, X_h);
 
+  	cudaDeviceSynchronize();
+	//
+  	int n_batches = ceil(N_OBS / BATCHSIZE); 
+  	//printf("Batches %d %d",BATCHSIZE,n_batches);
+  	//2. encode to get hidden values y
+  	dim3 dimGrid2(1);
+  	dim3 dimBlock2(BATCHSIZE);
+  	//dim3 dimBlock2(1);
+  	//printf("\n N : %d",model_h->N);
+  	int ib=0;
+  	//n_batches = 1;
+  	for (ib=0; ib<n_batches;ib++) {
+    	    //2. encode to get hidden values y
+   	    dA_get_hidden_values_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias,tilde_x_d,y_d,ib,BATCHSIZE);
+	    //3.decode by reconstrution to get z
+	    dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
+	    //4. Update error in reconstruction - visible error for every minibatch by atomic add kernel
+	    dA_L_vbias_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dvbias,N_FEATS,X_d,z_d,ib,BATCHSIZE,learning_rate);
+  	    //5.Update error in hidden units outputs, we would use it to update weights
+	    dA_L_hbias_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dL_hbias,dhbias,N_HIDDEN,N_FEATS,y_d,dW_flat,ib,BATCHSIZE,learning_rate);
+	    //6. Weights updates for minibatch
+	    dA_W_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dL_hbias,model_h->n_hidden,model_h->n_visible,
+						y_d,dW_flat,tilde_x_d,ib,BATCHSIZE,learning_rate);
+ 	}
+  	//
+	cuda_ret = cudaDeviceSynchronize();
+	if (cuda_ret != cudaSuccess)
+	    printf("Error in kernel");
+	//
+  	cudaMemcpy(tilde_x_h, tilde_x_d,sizeof(double) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
+	cudaMemcpy(y_h, y_d,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
+	cudaMemcpy(z_h, z_d,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
+	cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
+	cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
+	cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+	cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
+	cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
+	///cudaDeviceSynchronize();
+	//
+	/*
+	printf("ibb is: %d\n",ib);
+	for(int i=0;i<N_OBS;i++) {
+	    printf("\ntile_x_h : "); for(int j=0;j<5;j++){ printf(" %f ",tilde_x_h[i*N_OBS+j]); }
+	}
+	printf("\ny_h : "); for(int j=0;j<5;j++){ printf(" %f ",y_h[j]); }
+	//for(int i=0;i<N_OBS;i++) {
+	printf("\nz_h: "); for(int j=0;j<5;j++){ printf(" %f ",z_h[j]); }
+	//}
+	printf("\nh vbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->vbias[j]); }
+	printf("\nh hbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->hbias[j]); }
+	printf("\nh Weights: ");for(int j=0;j<5;j++){ printf(" %f ",model_h->W_flat[j]); }
+	*/
+	//
+	//model_h->W_flat = hW_flat;
+	// read results from device
+  }
   // free up memory
   cudaFree(X_d); cudaFree(tilde_x_d); cudaFree(dW_flat);
   cudaFree(dhbias); cudaFree(dvbias); cudaFree(dL_vbias);
@@ -324,19 +331,19 @@ void test_dbn(void) {
   dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
 
   // train using gold standard
-  //for(epoch=0; epoch<training_epochs; epoch++) {
+  for(epoch=0; epoch<training_epochs; epoch++) {
     for(i=0; i<train_N; i++) {
       dA_train_gold(&da_gold, train_X[i], learning_rate, corruption_level);
     }
-  //}
+  }
   
   //* Start of GPU Code
   // train using kernel
   //dA_train_on_device(&da_h, train_X, learning_rate, corruption_level);
-  dA_train_on_device1(&da_h, train_X, learning_rate, corruption_level);
+  dA_train_on_device1(&da_h, train_X, learning_rate, corruption_level,training_epochs);
   printf("\nCPU :"); for(int j=0;j<5;j++) {printf("%f ", da_gold.W_flat[j]);};
   printf("\nGPU :"); for(int j=0;j<5;j++) {printf("%f ", da_h.W_flat[j]);};
-  //*End of GPU Coode
+  //* End of GPU Coode
   // test data
   int test_X[2][20] = {
     {1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
