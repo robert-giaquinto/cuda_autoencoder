@@ -193,11 +193,9 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   //int i,j;
   printf("\n ** in device processing ** \n"); 
   //
-  float time1, time2, time3,time31,time32,time33,time34,time35,time36,time37,time38;
-  time1=time2=time3=time31=time32=time33=time34=time35=time36=time37=time38=0.0;
-  unsigned int timer1;
-  cutCreateTimer(&timer1);
-  cutStartTimer(timer1);  
+  float time1, time2, time3,time31,time32,time33,time34,time35,time36,time37,time38,time39;
+  time1=time2=time3=time31=time32=time33=time34=time35=time36=time37=time38=time39=0.0;
+  unsigned int timer1; cutCreateTimer(&timer1); cutStartTimer(timer1);  
   //
   double p = 1 - corruption_level;  
   // flatten input array
@@ -220,13 +218,9 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   //double *L_hbias = (double *)malloc(sizeof(double) * 1 * N_HIDDEN);
   double *dL_hbias = allocate_device_dL_hbias(1, N_HIDDEN);
   //
-  cutStopTimer(timer1);
-  time1 = cutGetTimerValue(timer1);
-  cutDeleteTimer(timer1);
+  cutStopTimer(timer1); time1 = cutGetTimerValue(timer1); cutDeleteTimer(timer1);
   //
-  unsigned int timer2;
-  cutCreateTimer(&timer2);
-  cutStartTimer(timer2);
+  unsigned int timer2;cutCreateTimer(&timer2); cutStartTimer(timer2);
   // copy data over to device
   copy_x_to_device(X_d, X_h);
   copy_x_to_device(tilde_x_d, X_h);
@@ -236,15 +230,11 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   cudaMemcpy(dhbias, model_h->hbias, sizeof(double)*N_HIDDEN, cudaMemcpyHostToDevice);
   cudaMemcpy(dvbias, model_h->vbias, sizeof(double)*N_FEATS, cudaMemcpyHostToDevice);
   //
-  cutStopTimer(timer2);
-  time2 = cutGetTimerValue(timer2);
-  cutDeleteTimer(timer2);
+  cutStopTimer(timer2); time2 = cutGetTimerValue(timer2); cutDeleteTimer(timer2);
   //
   printf("X_h %d %d",X_h[1],X_h[2]);
   //
-  unsigned int timer3;
-  cutCreateTimer(&timer3);
-  cutStartTimer(timer3);
+  //unsigned int timer3; cutCreateTimer(&timer3); cutStartTimer(timer3);
   //
   for(epoch=0; epoch<training_epochs; epoch++) {
 	//  copy_ae_to_device(model_d, model_h);
@@ -255,7 +245,7 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
      	dA_get_corrupted_input_kernel<<<dimGrid1, dimBlock1>>>(N_OBS*N_FEATS, tilde_x_d, p);
 	//
 	//dA_get_corrupted_input(model_h, X_h, tilde_x_h, p);
-  	cudaMemcpy(X_h, tilde_x_d, sizeof(int) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
+  	//cudaMemcpy(X_h, tilde_x_d, sizeof(int) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
   	//copy_x_to_host(tilde_x, X_h);
   	cutStopTimer(timer31); time31 += cutGetTimerValue(timer31); cutDeleteTimer(timer31);
   	//cudaDeviceSynchronize();
@@ -292,33 +282,6 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
 							y_d,dW_flat,tilde_x_d,ib,BATCHSIZE,lr);
   		cutStopTimer(timer36); time36 += cutGetTimerValue(timer36); cutDeleteTimer(timer36);
  	}
-	//
-  	unsigned int timer37; cutCreateTimer(&timer37);	cutStartTimer(timer37);
-        cuda_ret = cudaDeviceSynchronize();
-        if (cuda_ret != cudaSuccess)
-            printf("Error in kernel");
-        //
-        //cudaMemcpy(tilde_x_h, tilde_x_d,sizeof(double) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
-	//cudaMemcpy(y_h, y_d,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
-	//cudaMemcpy(z_h, z_d,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
-	//cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
-	cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
-	//cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
-	cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
-	cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
-	//
-  	cutStopTimer(timer37); time37 += cutGetTimerValue(timer37); cutDeleteTimer(timer37);
-	//cudaMemcpy(model_h->W, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
-  	unsigned int timer38; cutCreateTimer(&timer38);	cutStartTimer(timer38);
-	//We can not directly copy to W and W is used to test, so we populate it using a loop
-	for(int i=0; i<model_h->n_hidden; i++) {
-    	    for(int j=0; j<model_h->n_visible; j++) {
-        	model_h->W[i][j] = model_h->W_flat[i*model_h->n_visible + j];
-      	    }	
-    	}
-        //
-  	cutStopTimer(timer38); time38 += cutGetTimerValue(timer38); cutDeleteTimer(timer38);
-
 	//******************************************************************************************************
 	/*
 	printf("ibb is: %d\n",ib);
@@ -336,9 +299,36 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
 	//
   }
   //
-  cutStopTimer(timer3);
-  time3 = cutGetTimerValue(timer3);
-  cutDeleteTimer(timer3);
+  //
+  unsigned int timer37; cutCreateTimer(&timer37);cutStartTimer(timer37);
+  cuda_ret = cudaDeviceSynchronize();
+  if (cuda_ret != cudaSuccess)
+      printf("Error in kernel");
+  cutStopTimer(timer37); time37 += cutGetTimerValue(timer37); cutDeleteTimer(timer37);
+  //
+  unsigned int timer38; cutCreateTimer(&timer38);cutStartTimer(timer38);
+  //cudaMemcpy(tilde_x_h, tilde_x_d,sizeof(double) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
+  //cudaMemcpy(y_h, y_d,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
+  //cudaMemcpy(z_h, z_d,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
+  //cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
+  //cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
+  cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+  //
+  cutStopTimer(timer38); time38 += cutGetTimerValue(timer38); cutDeleteTimer(timer38);
+  //cudaMemcpy(model_h->W, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+  unsigned int timer39; cutCreateTimer(&timer39);	cutStartTimer(timer39);
+  //We can not directly copy to W and W is used to test, so we populate it using a loop
+  for(int i=0; i<model_h->n_hidden; i++) {
+      for(int j=0; j<model_h->n_visible; j++) {
+       	model_h->W[i][j] = model_h->W_flat[i*model_h->n_visible + j];
+      }	
+  }
+  //
+  cutStopTimer(timer39); time39 += cutGetTimerValue(timer39); cutDeleteTimer(timer39);
+
+  //cutStopTimer(timer3);time3 = cutGetTimerValue(timer3); cutDeleteTimer(timer3);
   //
   // free up memory
   cudaFree(X_d); cudaFree(tilde_x_d); cudaFree(dW_flat);
@@ -367,6 +357,7 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   printf("time36 : %f\n", time36);
   printf("time37 : %f\n", time37);
   printf("time38 : %f\n", time38);
+  printf("time39 : %f\n", time39);
   //
   
 }
@@ -403,11 +394,11 @@ void test_dbn(void) {
   };
   
   /*  To increase size of array for testing
-  int train_X[100][20];
+  int train_X[N_OBS][N_FEATS];
   int i1,i2,i3;
-  for (i1=0;i1<100;i1++) {
+  for (i1=0;i1<N_OBS;i1++) {
    for (i3=0;i3<10;i3++) {
-     for(i2=0;i2<20;i2++) {
+     for(i2=0;i2<N_FEATS;i2++) {
         train_X[i1][i2] = train_X_init[i3][i2];
      }
      i1++;
@@ -433,7 +424,7 @@ void test_dbn(void) {
   printf("da_gold vbias  : %f %f %f \n",da_gold.vbias[0],da_gold.vbias[1],da_gold.vbias[2]);
   printf("da_h vbias     : %f %f %f \n",da_h.vbias[0],da_h.vbias[1],da_h.vbias[2]);
   //***
-  printf("Starting gold training..");
+  printf("  Starting gold training..");
   unsigned int cputimer;
   cutCreateTimer(&cputimer);
   cutStartTimer(cputimer);
