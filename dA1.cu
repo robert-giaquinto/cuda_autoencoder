@@ -12,7 +12,7 @@
 
 #define N_FEATS 20
 #define N_OBS 10
-#define BATCHSIZE 2
+#define BATCHSIZE 1
 #define N_HIDDEN 5
 
 // declarations for CPU train functions
@@ -193,7 +193,8 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   //int i,j;
   printf("\n ** in device processing ** \n"); 
   //
-  float time1, time2, time3;
+  float time1, time2, time3,time31,time32,time33,time34,time35,time36,time37,time38;
+  time1=time2=time3=time31=time32=time33=time34=time35=time36=time37=time38=0.0;
   unsigned int timer1;
   cutCreateTimer(&timer1);
   cutStartTimer(timer1);  
@@ -247,13 +248,16 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   //
   for(epoch=0; epoch<training_epochs; epoch++) {
 	//  copy_ae_to_device(model_d, model_h);
+  	unsigned int timer31; cutCreateTimer(&timer31);	cutStartTimer(timer31);
   	//1. set up corrupted input for all together
   	dim3 dimGrid1(1);
      	dim3 dimBlock1(N_OBS*N_FEATS);
      	dA_get_corrupted_input_kernel<<<dimGrid1, dimBlock1>>>(N_OBS*N_FEATS, tilde_x_d, p);
+	//
 	//dA_get_corrupted_input(model_h, X_h, tilde_x_h, p);
   	cudaMemcpy(X_h, tilde_x_d, sizeof(int) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
   	//copy_x_to_host(tilde_x, X_h);
+  	cutStopTimer(timer31); time31 += cutGetTimerValue(timer31); cutDeleteTimer(timer31);
   	//cudaDeviceSynchronize();
 	//
   	int n_batches = ceil(N_OBS / BATCHSIZE); 
@@ -267,18 +271,29 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   	//n_batches = 1;
   	for (ib=0; ib<n_batches;ib++) {
         	//2. encode to get hidden values y
+  		unsigned int timer32; cutCreateTimer(&timer32);	cutStartTimer(timer32);
        		dA_get_hidden_values_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias,tilde_x_d,y_d,ib,BATCHSIZE);
+  		cutStopTimer(timer32); time32 += cutGetTimerValue(timer32); cutDeleteTimer(timer32);
     		//3.decode by reconstrution to get z
+  		unsigned int timer33; cutCreateTimer(&timer33);	cutStartTimer(timer33);
     		dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
+  		cutStopTimer(timer33); time33 += cutGetTimerValue(timer33); cutDeleteTimer(timer33);
     		//4. Update error in reconstruction - visible error for every minibatch by atomic add kernel
+  		unsigned int timer34; cutCreateTimer(&timer34);	cutStartTimer(timer34);
     		dA_L_vbias_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dvbias,N_FEATS,X_d,z_d,ib,BATCHSIZE,lr);
+  		cutStopTimer(timer34); time34 += cutGetTimerValue(timer34); cutDeleteTimer(timer34);
       		//5.Update error in hidden units outputs, we would use it to update weights
+  		unsigned int timer35; cutCreateTimer(&timer35);	cutStartTimer(timer35);
     		dA_L_hbias_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dL_hbias,dhbias,N_HIDDEN,N_FEATS,y_d,dW_flat,ib,BATCHSIZE,lr);
+  		cutStopTimer(timer35); time35 += cutGetTimerValue(timer35); cutDeleteTimer(timer35);
     		//6. Weights updates for minibatch
+  		unsigned int timer36; cutCreateTimer(&timer36);	cutStartTimer(timer36);
     		dA_W_kernel<<<dimGrid2,dimBlock2>>>(model_h->N,dL_vbias,dL_hbias,model_h->n_hidden,model_h->n_visible,
 							y_d,dW_flat,tilde_x_d,ib,BATCHSIZE,lr);
+  		cutStopTimer(timer36); time36 += cutGetTimerValue(timer36); cutDeleteTimer(timer36);
  	}
 	//
+  	unsigned int timer37; cutCreateTimer(&timer37);	cutStartTimer(timer37);
         cuda_ret = cudaDeviceSynchronize();
         if (cuda_ret != cudaSuccess)
             printf("Error in kernel");
@@ -291,7 +306,10 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
 	//cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
 	cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
 	cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+	//
+  	cutStopTimer(timer37); time37 += cutGetTimerValue(timer37); cutDeleteTimer(timer37);
 	//cudaMemcpy(model_h->W, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+  	unsigned int timer38; cutCreateTimer(&timer38);	cutStartTimer(timer38);
 	//We can not directly copy to W and W is used to test, so we populate it using a loop
 	for(int i=0; i<model_h->n_hidden; i++) {
     	    for(int j=0; j<model_h->n_visible; j++) {
@@ -299,6 +317,8 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
       	    }	
     	}
         //
+  	cutStopTimer(timer38); time38 += cutGetTimerValue(timer38); cutDeleteTimer(timer38);
+
 	//******************************************************************************************************
 	/*
 	printf("ibb is: %d\n",ib);
@@ -339,6 +359,14 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   printf("\ntime1  : %f\n", time1);
   printf("time2  : %f\n", time2);
   printf("time3  : %f\n", time3);
+  printf("time31 : %f\n", time31);
+  printf("time32 : %f\n", time32);
+  printf("time33 : %f\n", time33);
+  printf("time34 : %f\n", time34);
+  printf("time35 : %f\n", time35);
+  printf("time36 : %f\n", time36);
+  printf("time37 : %f\n", time37);
+  printf("time38 : %f\n", time38);
   //
   
 }
@@ -352,7 +380,7 @@ void test_dbn(void) {
 
   double learning_rate = 0.1;
   double corruption_level = 0.3;
-  int training_epochs = 1000;
+  int training_epochs = 100;
 
   int train_N = 10;
   int test_N = 2;
