@@ -8,12 +8,18 @@
 #include "dA.h" // dA struct
 
 #define RANDOM_MAX 100
+#define N_FEATS 20
+#define N_OBS 10
+#define BATCHSIZE 1
+#define N_HIDDEN 5
+#define N_HIDXFEATS (N_HIDDEN*N_FEATS)
 
 __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level);
 __device__ int binomial_kernel(int n, double p);
 __device__ double sigmoid_kernel(double x);
 __global__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p);
-__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib, int batchsize);
+__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib);
+__global__ void dA_get_hidden_values_kernel1(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib);
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize);
 __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr);
@@ -89,17 +95,62 @@ __device__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p
 }
 
 
-__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib, int batchsize) {
+
+__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib) {
 
   //*
   //int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
-  if (threadIdx.x < batchsize) {
+  //put W and X in SM first
+  __shared__ double dWs[N_HIDXFEATS];
+  __shared__ float ys[N_HIDDEN];
+  __shared__ int xs[BATCHSIZE*N_FEATS];
+  __shared__ double Sdhbias[N_HIDDEN];
+  int shiftXIdx = ib*BATCHSIZE*n_visible;
+  //Load data required by each thread first  
+  if (threadIdx.x < n_visible) {
+     for(int m=0; m<n_hidden;m++) {
+	dWs[m*n_visible+threadIdx.x] = dW[m*n_visible+threadIdx.x];
+     }
+     for (int m1=0;m1<BATCHSIZE;m1++) {
+     	xs[m1*BATCHSIZE+threadIdx.x] = x[shiftXIdx + m1*BATCHSIZE + threadIdx.x];
+     }
+  }
+  if (threadIdx.x < n_hidden) {
+	ys[threadIdx.x] = 0.0;
+	Sdhbias[threadIdx.x] = dhbias[threadIdx.x];
+  }
+  __syncthreads();
+  //
+  int idx = threadIdx.x;
+  if (idx < BATCHSIZE) {  
+     for (int j=0;j<n_visible;j++) { 
+      for (int i=0; i< n_hidden; i++) {
+        ys[i] += dWs[i*n_visible+j] * xs[idx*N_FEATS+j];
+        ys[i] += Sdhbias[i];
+      }
+     }
+  }
+  __syncthreads();
+  //
+  
+  if (threadIdx.x < n_hidden) {
+     y[threadIdx.x] = sigmoid_kernel(ys[threadIdx.x]);     
+     //y[threadIdx.x] = ys[threadIdx.x]/BATCHSIZE;     
+  }  
+  __syncthreads();
+
+}
+
+__global__ void dA_get_hidden_values_kernel1(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib) {
+  //*
+  //int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
+  if (threadIdx.x < BATCHSIZE) {
     int i,j;
     double tempYi = 0.0;
     for (i=0; i< n_hidden; i++) {
       tempYi = 0.0;
       for (j=0; j< n_visible; j++) {
-        tempYi += dW[i*n_hidden+j] * x[ib*batchsize*n_visible+j];
+        tempYi += dW[i*n_hidden+j] * x[ib*BATCHSIZE*n_visible+j];
       }
       tempYi += dhbias[i];
       //atomicAdd(&y[shiftYIdx+i], dhbias[i]);
@@ -110,7 +161,6 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double 
   __syncthreads();
 
 }
-
 
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize) {

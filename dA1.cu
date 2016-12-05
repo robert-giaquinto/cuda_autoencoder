@@ -8,12 +8,8 @@
 
 // includes, kernel
 #include <dA_kernel1.cu>
+//#include <dA.h>
 
-
-#define N_FEATS 20
-#define N_OBS 10
-#define BATCHSIZE 1
-#define N_HIDDEN 5
 
 // declarations for CPU train functions
 extern "C"
@@ -36,7 +32,7 @@ void dA_reconstruct(dA *model, int *x, double *z);
 void test_dbn();
 void dA_train_on_device(dA*, int[][N_FEATS], double, double);
 
-// Temporary testing
+  // Temporary testing
 
 //* end of temporary testing
 // Begin definign functions
@@ -140,6 +136,13 @@ double * allocate_device_z(int m, int n) {
   return z_d;
 }
 
+double * allocate_device_y(int m, int n) {
+  double *y_d = NULL;
+  int size = m * n * sizeof(double);
+  cudaMalloc((void**)&y_d, size);
+  return y_d;
+}
+
 double*  allocate_device_dW() {
   double *dW_flat;
   int dW_size = sizeof(double) * N_HIDDEN * N_FEATS;
@@ -204,8 +207,8 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   int *X_d = allocate_device_x();
   int *tilde_x_d = allocate_device_x();
   //int *tilde_x_h = (int*)malloc(sizeof(int)* N_OBS * N_FEATS);
-  //double *y_h = (double*)malloc(sizeof(double)* 1* N_HIDDEN);
-  double *y_d = allocate_device_z(1,N_HIDDEN); 
+  double *y_h = (double*)malloc(sizeof(double)* 1* N_HIDDEN);
+  double *y_d = allocate_device_y(1,N_HIDDEN); 
   //double *hW_flat = (double*)malloc(sizeof(double)* N_HIDDEN * N_FEATS);
   double *dW_flat = allocate_device_dW();
   double *dhbias = allocate_device_dhbias();
@@ -240,8 +243,8 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
 	//  copy_ae_to_device(model_d, model_h);
   	unsigned int timer31; cutCreateTimer(&timer31);	cutStartTimer(timer31);
   	//1. set up corrupted input for all together
-  	dim3 dimGrid1(1);
-     	dim3 dimBlock1(N_OBS*N_FEATS);
+  	dim3 dimGrid1(ceil(N_OBS/1024));
+     	dim3 dimBlock1(1024);
      	dA_get_corrupted_input_kernel<<<dimGrid1, dimBlock1>>>(N_OBS*N_FEATS, tilde_x_d, p);
 	//
 	//dA_get_corrupted_input(model_h, X_h, tilde_x_h, p);
@@ -262,7 +265,12 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   	for (ib=0; ib<n_batches;ib++) {
         	//2. encode to get hidden values y
   		unsigned int timer32; cutCreateTimer(&timer32);	cutStartTimer(timer32);
-       		dA_get_hidden_values_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias,tilde_x_d,y_d,ib,BATCHSIZE);
+  		dim3 dimGrid32(1);
+  	        dim3 dimBlock32(BATCHSIZE);
+       		 //dA_get_hidden_values_kernel<<<dimGrid32,dimBlock32>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias,tilde_x_d,y_d,ib);
+       		dA_get_hidden_values_kernel1<<<dimGrid32,dimBlock32>>>(N_HIDDEN,N_FEATS,dW_flat,dhbias,tilde_x_d,y_d,ib);
+  		cudaMemcpy(y_h, y_d,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
+  		printf("\ny_h : "); for(int j=0;j<5;j++){ printf(" %f ",y_h[j]); }
   		cutStopTimer(timer32); time32 += cutGetTimerValue(timer32); cutDeleteTimer(timer32);
     		//3.decode by reconstrution to get z
   		unsigned int timer33; cutCreateTimer(&timer33);	cutStartTimer(timer33);
@@ -283,20 +291,7 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   		cutStopTimer(timer36); time36 += cutGetTimerValue(timer36); cutDeleteTimer(timer36);
  	}
 	//******************************************************************************************************
-	/*
-	printf("ibb is: %d\n",ib);
-	for(int i=0;i<N_OBS;i++) {
-	    printf("\ntile_x_h : "); for(int j=0;j<5;j++){ printf(" %f ",tilde_x_h[i*N_OBS+j]); }
-	}
-	printf("\ny_h : "); for(int j=0;j<5;j++){ printf(" %f ",y_h[j]); }
-	//for(int i=0;i<N_OBS;i++) {
-	printf("\nz_h: "); for(int j=0;j<5;j++){ printf(" %f ",z_h[j]); }
-	//}
-	printf("\nh vbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->vbias[j]); }
-	printf("\nh hbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->hbias[j]); }
-	printf("\nh Weights: ");for(int j=0;j<5;j++){ printf(" %f ",model_h->W_flat[j]); }
-	*/
-	//
+
   }
   //
   //
@@ -308,13 +303,27 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
   //
   unsigned int timer38; cutCreateTimer(&timer38);cutStartTimer(timer38);
   //cudaMemcpy(tilde_x_h, tilde_x_d,sizeof(double) * N_OBS * N_FEATS, cudaMemcpyDeviceToHost);
-  //cudaMemcpy(y_h, y_d,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
+
   //cudaMemcpy(z_h, z_d,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
   //cudaMemcpy(L_vbias, dL_vbias,sizeof(double) * 1*N_FEATS, cudaMemcpyDeviceToHost);
   cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
   //cudaMemcpy(L_hbias, dL_hbias,sizeof(double) * 1*N_HIDDEN, cudaMemcpyDeviceToHost);
   cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
   cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
+  //
+  //*
+  //printf("ibb is: %d\n",ib);
+  //for(int i=0;i<N_OBS;i++) {
+  //    printf("\ntile_x_h : "); for(int j=0;j<5;j++){ printf(" %f ",tilde_x_h[i*N_OBS+j]); }
+  //}
+
+  //for(int i=0;i<N_OBS;i++) {
+  //printf("\nz_h: "); for(int j=0;j<5;j++){ printf(" %f ",z_h[j]); }
+  //}
+  printf("\nh vbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->vbias[j]); }
+  printf("\nh hbias: "); for(int j=0;j<5;j++){ printf(" %f ",model_h->hbias[j]); }
+  printf("\nh Weights: ");for(int j=0;j<5;j++){ printf(" %f ",model_h->W_flat[j]); }
+  //*/
   //
   cutStopTimer(timer38); time38 += cutGetTimerValue(timer38); cutDeleteTimer(timer38);
   //cudaMemcpy(model_h->W, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
@@ -371,14 +380,16 @@ void test_dbn(void) {
 
   double learning_rate = 0.1;
   double corruption_level = 0.3;
-  int training_epochs = 100;
+  //int training_epochs = 100;
+  int training_epochs = 1;
 
-  int train_N = 10;
+  //int train_N = 10;
+  int train_N = N_OBS;
   int test_N = 2;
   int n_visible = 20;
   int n_hidden = 5;
 
-  // training data
+    // training data
   //int train_X_init[10][20] = {
   int train_X[10][20] = {
     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -406,12 +417,18 @@ void test_dbn(void) {
   }
   */
 
-  // construct dA
+    // construct dA
   dA da_gold, da_h;
   dA__construct(&da_gold, train_N, n_visible, n_hidden, NULL, NULL, NULL);
   dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
-  memcpy(da_h.W, da_gold.W, sizeof(double)*n_hidden*n_visible);
-  memcpy(da_h.W_flat, da_gold.W_flat,sizeof(double)*n_hidden*n_visible);
+  //memcpy(da_h.W, da_gold.W, sizeof(double)*n_hidden*n_visible);
+  //memcpy(da_h.W_flat, da_gold.W_flat,sizeof(double)*n_hidden*n_visible);
+  for (int i=0;i<n_hidden;i++) {
+    for (int j=0;j<n_visible;j++) {
+	da_h.W[i][j] = da_gold.W[i][j];
+	da_h.W_flat[i*n_visible+j] = da_gold.W_flat[i*n_visible+j];
+    }
+  }
   //*** to compare, initial values should be same for both the objects
   printf("da_gold W      : %f %f %f \n", da_gold.W[0][0],da_gold.W[0][1],da_gold.W[0][2]);
   printf("da_h W         : %f %f %f \n", da_h.W[0][0],da_h.W[0][1],da_h.W[0][2]);
