@@ -47,11 +47,10 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
   model->n_visible = n_visible;
   model->n_hidden = n_hidden;
 
+  model->W_flat = (double*)malloc(sizeof(double)*n_hidden*n_visible);
   if(W == NULL) {
     model->W = (double **)malloc(sizeof(double*) * n_hidden);
-    model->W_flat = (double*)malloc(sizeof(double)*n_hidden*n_visible);
     model->W[0] = (double *)malloc(sizeof(double) * n_visible * n_hidden);
-   
     for(i=0; i<n_hidden; i++) {
       model->W[i] = model->W[0] + i * n_visible;
     }
@@ -65,6 +64,11 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
     }
   } else {
     model->W = W;
+    for (int i=0; i < N_HIDDEN; ++i) {
+      for (int j=0; j < N_FEATS; ++j) {
+        model->W_flat[i*N_FEATS + j] = W[i][j];
+      }
+    }
   }
 
   if(hbias == NULL) {
@@ -194,12 +198,15 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
   dim3 dim_block(N_FEATS, 1, 1);
   // how many mini-batch updates to run?
   int n_updates = ceil((float)N_OBS / (float)BATCH_SIZE);
+  // initialize a random state for each thread;
+  curandState *d_state;
+  cudaMalloc(&d_state, N_FEATS * BATCH_SIZE);
+  // run kernel!
   for (int epoch=0; epoch < epochs; ++epoch){
     for (int batch=0; batch < n_updates; ++batch) {
-      dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level, batch);
+      dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level, batch, d_state);
       cudaDeviceSynchronize();
     }
-    printf("%d ", epoch);
   }
   
   // read results from device
@@ -208,6 +215,7 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
   // free up memory
   free(X_h);
   free_device(&model_d);
+  cudaFree(d_state);
 }
 
 
@@ -222,6 +230,19 @@ void print_reconstruction(dA *model, int X[2][N_FEATS], bool flat) {
   }
 }
 
+void print_W(dA *model, bool flat) {
+  printf("\nflat = %d:\n", flat);
+  for (int i=0; i < N_HIDDEN; ++i) {
+    for (int j=0; j < N_FEATS; ++j) {
+      if (flat) {
+        printf("%f ", model->W_flat[i*N_FEATS + j]);
+      } else {
+        printf("%f ", model->W[i][j]);
+      }
+    }
+    printf("\n");
+  }
+}
 
 
 void test_dbn(void) {
@@ -254,7 +275,15 @@ void test_dbn(void) {
   // construct dA
   dA da_gold, da_h;
   dA__construct(&da_gold, train_N, n_visible, n_hidden, NULL, NULL, NULL);
-  dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
+  //dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
+  dA__construct(&da_h, train_N, n_visible, n_hidden, da_gold.W, da_gold.hbias, da_gold.vbias);
+
+
+  // print model parameters before training
+  print_W(&da_gold, 0);
+  print_W(&da_h, 1);
+
+
 
   // train using gold standard
   for(epoch=0; epoch<training_epochs; epoch++) {
@@ -265,6 +294,12 @@ void test_dbn(void) {
   
   // train using kernel
   dA_train_on_device(&da_h, train_X, learning_rate, corruption_level, training_epochs);
+
+
+  // print model parameters after training
+  print_W(&da_gold, 0);
+  print_W(&da_h, 1);
+
 
   // test data
   int test_X[2][N_FEATS] = {

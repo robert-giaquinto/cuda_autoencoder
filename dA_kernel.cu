@@ -8,24 +8,29 @@
 #include "dA.h" // dA struct
 
 
-__global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double corruption_level, int iter);
-__device__ int binomial_kernel(int n, double p);
+__global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double corruption_level, int iter, curandState *state);
+__device__ int binomial_kernel(int n, double p, curandState *state, int id);
 __device__ double sigmoid_kernel(double x);
 __device__ void dA_get_corrupted_input_kernel(dA *model, int *x, int *tilde_x, double p);
 __device__ void dA_get_hidden_values_kernel(dA *model, int *x, double *y);
 __device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
 
-
+__device__ double atomicAdd(double* address, double val);
+__device__ double atomicMultiply(double* address, double val);
 
 /////////////////////////////////////////////////////////////////
 // train functions called from host:
 
 // 1. using global memory, intermediate results may as well be in shared
-__global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double corruption_level, int iter) {
+__global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double corruption_level, int iter, curandState *state) {
   int bid = blockIdx.x;
   int tid = threadIdx.x;
   // skip rows corresponding to previous mini-batches
   int start = gridDim.x * N_FEATS * iter;
+
+  // random seed
+  int id = bid * blockDim.x + tid;
+  curand_init(2016, id, 0, &state[id]);
 
   // intialize intermediate pieces in shared memory
   // biases:
@@ -40,7 +45,7 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
   if (X_d[start + bid*N_FEATS + tid] == 0) {
     tilde_x[tid] = 0;
   } else {
-    tilde_x[tid] = binomial_kernel(1, 1.0 - corruption_level);
+    tilde_x[tid] = binomial_kernel(1, 1.0 - corruption_level, state, id);
   }
   __syncthreads();
 
@@ -49,13 +54,15 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
   if (tid < N_HIDDEN) {
     y[tid] = 0.0;
   }
-  __syncthreads(); // is this needed?
+  __syncthreads();
   for (int h=0; h < N_HIDDEN; ++h) {
-    y[h] += model.W_flat[h*N_FEATS + tid] * X_d[start + bid*N_FEATS + tid];
+    atomicAdd(&y[h], model.W_flat[h*N_FEATS + tid] * X_d[start + bid*N_FEATS + tid]);
+    //y[h] += model.W_flat[h*N_FEATS + tid] * X_d[start + bid*N_FEATS + tid];
   }
-  __syncthreads();  // is this needed?
+  __syncthreads();
   if (tid < N_HIDDEN) {
-    y[tid] += model.hbias[tid];
+    atomicAdd(&y[tid], model.hbias[tid]);
+    //y[tid] += model.hbias[tid];
     y[tid] = sigmoid_kernel(y[tid]);
   }
   __syncthreads();
@@ -64,31 +71,39 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
   __shared__ double z[N_FEATS];
   z[tid] = 0.0;
   for (int h=0; h < N_HIDDEN; ++h) {
-    z[tid] += model.W_flat[h*N_FEATS + tid] * y[h];
+    atomicAdd(&z[tid], model.W_flat[h*N_FEATS + tid] * y[h]);
+    //z[tid] += model.W_flat[h*N_FEATS + tid] * y[h];
   }
-  z[tid] += model.vbias[tid];
+  __syncthreads();
+  atomicAdd(&z[tid], model.vbias[tid]);
+  //z[tid] += model.vbias[tid];
   z[tid] = sigmoid_kernel(z[tid]);
   __syncthreads();
   
 
   // update vbias, each thread grabs a column of X_d, each block works on N_OBS / BATCH_SIZE rows
   L_vbias[tid] = X_d[start + bid * N_FEATS + tid] - z[tid];
-  model.vbias[tid] += learning_rate * L_vbias[tid] / model.N;
-  __syncthreads();  
+  atomicAdd(&model.vbias[tid], learning_rate * L_vbias[tid] / model.N);
+  //model.vbias[tid] += learning_rate * L_vbias[tid] / model.N;
+  __syncthreads();
 
   // update hbias
   for (int h=0; h < N_HIDDEN; ++h) {
-    L_hbias[h] += model.W_flat[h*N_FEATS + tid] * L_vbias[tid];
+    atomicAdd(&L_hbias[h], model.W_flat[h*N_FEATS + tid] * L_vbias[tid]);
+    //L_hbias[h] += model.W_flat[h*N_FEATS + tid] * L_vbias[tid];
   }
   if (tid < N_HIDDEN) {
-    L_hbias[tid] *= y[tid] * (1 - y[tid]);
-    model.hbias[tid] += learning_rate * L_hbias[tid] / model.N;
+    atomicMultiply(&L_hbias[tid], y[tid] * (1.0 - y[tid]));
+    atomicAdd(&model.hbias[tid], learning_rate * L_hbias[tid] / model.N);
+    //L_hbias[tid] *= y[tid] * (1.0 - y[tid]);
+    //model.hbias[tid] += learning_rate * L_hbias[tid] / model.N;
   }
   __syncthreads();  
 
   // Update weights
   for (int h=0; h < N_HIDDEN; ++h) {
-    model.W_flat[h * N_FEATS + tid] += learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N;
+    atomicAdd(&model.W_flat[h*N_FEATS + tid], learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N);
+    //model.W_flat[h * N_FEATS + tid] += learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N;
   }
 
 }
@@ -100,19 +115,15 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
 
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
 // NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
-__device__ int binomial_kernel(int n, double p) {
+__device__ int binomial_kernel(int n, double p, curandState *state, int id) {
   if (p < 0 || p > 1) return 0;
-
-  // init cuda random state
-  curandState_t state;
-  curand_init(0,0,0, &state);
 
   int i;
   int c = 0;
   double r;
 
   for (i = 0; i < n; ++i) {
-    r = curand_uniform_double(&state);  // should be between 0 and 1
+    r = curand_uniform_double(&state[id]);  // should be between 0 and 1
     if (r < p) c++;
   }
   return c;
@@ -122,6 +133,36 @@ __device__ int binomial_kernel(int n, double p) {
 __device__ double sigmoid_kernel(double x) {
   return 1.0 / (1.0 + exp(-x));
 }
+
+
+__device__ double atomicAdd(double* address, double val)
+{
+    unsigned long long int* address_as_ull =
+      (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do {
+      assumed = old;
+      old = atomicCAS(address_as_ull, assumed,
+                      __double_as_longlong(val +
+                                           __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+
+
+__device__ double atomicMultiply(double* address, double val)
+{
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do {
+      assumed = old;
+      old = atomicCAS(address_as_ull, assumed,
+                      __double_as_longlong(val *
+                                           __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+
 
 
 __device__ void dA_get_corrupted_input_kernel(dA* model, int *x, int *tilde_x, double p) {
