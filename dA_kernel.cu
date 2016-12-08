@@ -30,7 +30,7 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
 
   // random seed
   int id = bid * blockDim.x + tid;
-  curand_init(2016, id, 0, &state[id]);
+  curand_init(iter + 1000*bid, id, 0, &state[id]);
 
   // intialize intermediate pieces in shared memory
   // biases:
@@ -61,8 +61,8 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
   }
   __syncthreads();
   if (tid < N_HIDDEN) {
-    atomicAdd(&y[tid], model.hbias[tid]);
-    //y[tid] += model.hbias[tid];
+    //atomicAdd(&y[tid], model.hbias[tid]);
+    y[tid] += model.hbias[tid];
     y[tid] = sigmoid_kernel(y[tid]);
   }
   __syncthreads();
@@ -71,20 +71,20 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
   __shared__ double z[N_FEATS];
   z[tid] = 0.0;
   for (int h=0; h < N_HIDDEN; ++h) {
-    atomicAdd(&z[tid], model.W_flat[h*N_FEATS + tid] * y[h]);
-    //z[tid] += model.W_flat[h*N_FEATS + tid] * y[h];
+    //atomicAdd(&z[tid], model.W_flat[h*N_FEATS + tid] * y[h]);
+    z[tid] += model.W_flat[h*N_FEATS + tid] * y[h];
   }
   __syncthreads();
-  atomicAdd(&z[tid], model.vbias[tid]);
-  //z[tid] += model.vbias[tid];
+  //atomicAdd(&z[tid], model.vbias[tid]);
+  z[tid] += model.vbias[tid];
   z[tid] = sigmoid_kernel(z[tid]);
   __syncthreads();
   
 
   // update vbias, each thread grabs a column of X_d, each block works on N_OBS / BATCH_SIZE rows
   L_vbias[tid] = X_d[start + bid * N_FEATS + tid] - z[tid];
-  atomicAdd(&model.vbias[tid], learning_rate * L_vbias[tid] / model.N);
-  //model.vbias[tid] += learning_rate * L_vbias[tid] / model.N;
+  //atomicAdd(&model.vbias[tid], learning_rate * L_vbias[tid] / model.N);
+  model.vbias[tid] += learning_rate * L_vbias[tid] / model.N;
   __syncthreads();
 
   // update hbias
@@ -93,10 +93,10 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
     //L_hbias[h] += model.W_flat[h*N_FEATS + tid] * L_vbias[tid];
   }
   if (tid < N_HIDDEN) {
-    atomicMultiply(&L_hbias[tid], y[tid] * (1.0 - y[tid]));
-    atomicAdd(&model.hbias[tid], learning_rate * L_hbias[tid] / model.N);
-    //L_hbias[tid] *= y[tid] * (1.0 - y[tid]);
-    //model.hbias[tid] += learning_rate * L_hbias[tid] / model.N;
+    //atomicMultiply(&L_hbias[tid], y[tid] * (1.0 - y[tid]));
+    //atomicAdd(&model.hbias[tid], learning_rate * L_hbias[tid] / model.N);
+    L_hbias[tid] *= y[tid] * (1.0 - y[tid]);
+    model.hbias[tid] += learning_rate * L_hbias[tid] / model.N;
   }
   __syncthreads();  
 

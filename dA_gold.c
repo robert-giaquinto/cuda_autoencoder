@@ -6,7 +6,7 @@
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
 void dA_get_corrupted_input(dA*, int*, int*, double);
-void dA_get_hidden_values(dA*, int*, double*);
+void dA_get_hidden_values(dA*, int*, double*, bool);
 void dA_get_reconstructed_input(dA*, double*, double*, bool);
 int binomial(int n, double p);
 double sigmoid(double x);
@@ -45,12 +45,16 @@ void dA_get_corrupted_input(dA* model, int *x, int *tilde_x, double p) {
 
 
 // Encode
-void dA_get_hidden_values(dA* model, int *x, double *y) {
+void dA_get_hidden_values(dA* model, int *x, double *y, bool flat) {
   int i,j;
   for(i=0; i<model->n_hidden; i++) {
     y[i] = 0;
     for(j=0; j<model->n_visible; j++) {
-      y[i] += model->W[i][j] * x[j];
+      if (flat) {
+        y[i] += model->W_flat[i*N_FEATS + j] * x[j];
+      } else {
+        y[i] += model->W[i][j] * x[j];
+      }
     }
     y[i] += model->hbias[i];
     y[i] = sigmoid(y[i]);
@@ -91,7 +95,7 @@ void dA_train_gold(dA* model, int *x, double lr, double corruption_level) {
   double p = 1 - corruption_level;
 
   dA_get_corrupted_input(model, x, tilde_x, p);
-  dA_get_hidden_values(model, tilde_x, y);
+  dA_get_hidden_values(model, tilde_x, y, 0);
   dA_get_reconstructed_input(model, y, z, 0);
 
   // vbias

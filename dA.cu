@@ -13,7 +13,7 @@
 // declarations for CPU train functions
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
-void dA_get_hidden_values(dA*, int*, double*);
+void dA_get_hidden_values(dA*, int*, double*, bool);
 void dA_get_reconstructed_input(dA*, double*, double*, bool);
 
 
@@ -54,7 +54,6 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
     for(i=0; i<n_hidden; i++) {
       model->W[i] = model->W[0] + i * n_visible;
     }
-
     for(i=0; i<n_hidden; i++) {
       for(j=0; j<n_visible; j++) {
         double u = uniform(-a, a);
@@ -64,8 +63,8 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
     }
   } else {
     model->W = W;
-    for (int i=0; i < N_HIDDEN; ++i) {
-      for (int j=0; j < N_FEATS; ++j) {
+    for (int i=0; i < n_hidden; ++i) {
+      for (int j=0; j < n_visible; ++j) {
         model->W_flat[i*N_FEATS + j] = W[i][j];
       }
     }
@@ -99,7 +98,7 @@ void dA__destruct(dA* model) {
 void dA_reconstruct(dA* model, int *x, double *z, bool flat) {
   double *y = (double *)malloc(sizeof(double) * model->n_hidden);
 
-  dA_get_hidden_values(model, x, y);
+  dA_get_hidden_values(model, x, y, flat);
   dA_get_reconstructed_input(model, y, z, flat);
 
   free(y);
@@ -191,7 +190,6 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
 
   // copy data over to device
   copy_x_to_device(X_d, X_h);
-  //  copy_ae_to_device(model_d, model_h);
 
   // define kernel dimensions
   dim3 dim_grid(BATCH_SIZE, 1, 1);
@@ -275,14 +273,7 @@ void test_dbn(void) {
   // construct dA
   dA da_gold, da_h;
   dA__construct(&da_gold, train_N, n_visible, n_hidden, NULL, NULL, NULL);
-  //dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
-  dA__construct(&da_h, train_N, n_visible, n_hidden, da_gold.W, da_gold.hbias, da_gold.vbias);
-
-
-  // print model parameters before training
-  print_W(&da_gold, 0);
-  print_W(&da_h, 1);
-
+  dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
 
 
   // train using gold standard
