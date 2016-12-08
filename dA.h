@@ -1,6 +1,13 @@
 //#ifndef _DA_H_
 //#define _DA_H_
 
+#define N_FEATS 20
+#define N_OBS 10
+#define BATCH_SIZE 1
+#define N_HIDDEN 5
+#define RANDOM_MAX 100
+
+
 typedef struct {
   int N;
   int n_visible;

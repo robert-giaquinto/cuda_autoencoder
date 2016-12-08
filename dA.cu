@@ -10,25 +10,28 @@
 #include <dA_kernel.cu>
 
 
-#define N_FEATS 20
-#define N_OBS 10
-
-
 // declarations for CPU train functions
 extern "C"
 void dA_train_gold(dA*, int*, double, double);
 void dA_get_hidden_values(dA*, int*, double*);
-void dA_get_reconstructed_input(dA*, double*, double*);
+void dA_get_reconstructed_input(dA*, double*, double*, bool);
 
 
 // functions defined in this file are for intializing the autoencoder
 double uniform(double min, double max);
 void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, double *hbias, double *vbais);
 void dA__destruct(dA *model);
-void dA_reconstruct(dA *model, int *x, double *z);
+void dA_reconstruct(dA *model, int *x, double *z, bool flat);
 void test_dbn();
-void dA_train_on_device(dA*, int[][N_FEATS], double, double);
 
+void dA_train_on_device(dA*, int[][N_FEATS], double, double, int);
+int* flatten_array(int arr[N_OBS][N_FEATS]);
+int* allocate_device_x();
+dA init_device_ae(const dA model_h);
+void copy_x_to_device(int *x_d, int *x_h);
+void copy_ae_from_device(dA *model_h, const dA model_d);
+void free_device(dA *model);
+void print_reconstruction(dA, int[2][N_FEATS], bool);
 
 // Begin definign functions
 double uniform(double min, double max) {
@@ -48,7 +51,10 @@ void dA__construct(dA* model, int N, int n_visible, int n_hidden, double **W, do
     model->W = (double **)malloc(sizeof(double*) * n_hidden);
     model->W_flat = (double*)malloc(sizeof(double)*n_hidden*n_visible);
     model->W[0] = (double *)malloc(sizeof(double) * n_visible * n_hidden);
-    for(i=0; i<n_hidden; i++) model->W[i] = model->W[0] + i * n_visible;
+   
+    for(i=0; i<n_hidden; i++) {
+      model->W[i] = model->W[0] + i * n_visible;
+    }
 
     for(i=0; i<n_hidden; i++) {
       for(j=0; j<n_visible; j++) {
@@ -86,11 +92,11 @@ void dA__destruct(dA* model) {
 }
 
 
-void dA_reconstruct(dA* model, int *x, double *z) {
+void dA_reconstruct(dA* model, int *x, double *z, bool flat) {
   double *y = (double *)malloc(sizeof(double) * model->n_hidden);
 
   dA_get_hidden_values(model, x, y);
-  dA_get_reconstructed_input(model, y, z);
+  dA_get_reconstructed_input(model, y, z, flat);
 
   free(y);
 }
@@ -106,15 +112,6 @@ int* flatten_array(int arr[N_OBS][N_FEATS]) {
   return flat;
 }
 
-double* flatten_w(double **W, int n_visible, int n_hidden) {
-  double *flat = (double *)malloc(sizeof(double) * n_visible * n_hidden);
-  for (int i=0; i < n_hidden; ++i) {
-    for (int j=0; j < n_visible; ++j) {
-      flat[i*n_visible + j] = W[i][j];
-    }
-  }
-  return flat;
-}
 
 int * allocate_device_x() {
   int *x_d = NULL;
@@ -141,9 +138,6 @@ dA init_device_ae(const dA model_h) {
   cudaMalloc((void**)&model_d.W_flat, W_size);
   cudaMalloc((void**)&model_d.hbias, hbias_size);
   cudaMalloc((void**)&model_d.vbias, vbias_size);
-
-  // flatten w
-  //double *flat_w = flatten_w(model_h.W, model_h.n_visible, model_h.n_hidden);
 
   // copy over data
   cudaMemcpy(model_d.W_flat, model_h.W_flat, W_size, cudaMemcpyHostToDevice);
@@ -180,7 +174,7 @@ void free_device(dA *model) {
 }
   
 
-void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rate, double corruption_level) {
+void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rate, double corruption_level, int epochs) {
   // call kernel function from here
   // assign one observation to each block, each thread parallelizes a feature
   
@@ -196,11 +190,17 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
   //  copy_ae_to_device(model_d, model_h);
 
   // define kernel dimensions
-  int batch_size = 1;
-  dim3 dim_grid(batch_size, 1, 1);
+  dim3 dim_grid(BATCH_SIZE, 1, 1);
   dim3 dim_block(N_FEATS, 1, 1);
-  dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level);
-  cudaDeviceSynchronize();
+  // how many mini-batch updates to run?
+  int n_updates = ceil((float)N_OBS / (float)BATCH_SIZE);
+  for (int epoch=0; epoch < epochs; ++epoch){
+    for (int batch=0; batch < n_updates; ++batch) {
+      dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level, batch);
+      cudaDeviceSynchronize();
+    }
+    printf("%d ", epoch);
+  }
   
   // read results from device
   copy_ae_from_device(model_h, model_d);
@@ -208,6 +208,18 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
   // free up memory
   free(X_h);
   free_device(&model_d);
+}
+
+
+void print_reconstruction(dA *model, int X[2][N_FEATS], bool flat) {
+  double reconstructed_X[2][N_FEATS];
+  for(int i=0; i < 2; i++) {
+    dA_reconstruct(model, X[i], reconstructed_X[i], flat);
+    for(int j=0; j < N_FEATS; j++) {
+      printf("%.5f ", reconstructed_X[i][j]);
+    }
+    printf("\n");
+  }
 }
 
 
@@ -220,13 +232,13 @@ void test_dbn(void) {
   double corruption_level = 0.3;
   int training_epochs = 100;
 
-  int train_N = 10;
+  int train_N = N_OBS;
   int test_N = 2;
-  int n_visible = 20;
-  int n_hidden = 5;
+  int n_visible = N_FEATS;
+  int n_hidden = N_HIDDEN;
 
   // training data
-  int train_X[10][20] = {
+  int train_X[N_OBS][N_FEATS] = {
     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -252,27 +264,19 @@ void test_dbn(void) {
   }
   
   // train using kernel
-  printf("\nBefore: %f, %f", da_h.W_flat[0], da_h.hbias[0]);
-  dA_train_on_device(&da_h, train_X, learning_rate, corruption_level);
-  printf("\nAfter: %f, %f\n", da_h.W_flat[0], da_h.hbias[0]);
+  dA_train_on_device(&da_h, train_X, learning_rate, corruption_level, training_epochs);
 
   // test data
-  int test_X[2][20] = {
+  int test_X[2][N_FEATS] = {
     {1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0}
   };
-  double reconstructed_X[2][20];
-
 
   // test
-  for(i=0; i<test_N; i++) {
-    dA_reconstruct(&da_gold, test_X[i], reconstructed_X[i]);
-    for(j=0; j<n_visible; j++) {
-      printf("%.5f ", reconstructed_X[i][j]);
-    }
-    printf("\n");
-  }
-
+  printf("\nGold test output:\n");
+  print_reconstruction(&da_gold, test_X, 0);
+  printf("\nKernel test output:\n");
+  print_reconstruction(&da_h, test_X, 1);
 
   // destruct dA
   dA__destruct(&da_gold);
