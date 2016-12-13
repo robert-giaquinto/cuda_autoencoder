@@ -102,7 +102,7 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
 
   // Update weights
   for (int h=0; h < N_HIDDEN; ++h) {
-    atomicAdd(&model.W_flat[h*N_FEATS + tid], learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N);
+    atomicAdd(&model.W_flat[h*N_FEATS + tid], learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N / BATCH_SIZE);
     //model.W_flat[h * N_FEATS + tid] += learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N;
   }
 
