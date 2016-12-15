@@ -8,25 +8,30 @@
 #include "dA.h" // dA struct
 
 #define RANDOM_MAX 100
-#define N_FEATS 20
-#define N_OBS 10
-#define BATCHSIZE 1
-#define N_HIDDEN 5
+//#define N_FEATS 20
+#define N_FEATS 784
+#define N_OBS 100
+#define BATCHSIZE 2
+//#define N_HIDDEN 5
+#define N_HIDDEN 100
 #define N_HIDXFEATS (N_HIDDEN*N_FEATS)
+#define BLOCKSIZE 2
+#define TILE_WIDTH BLOCKSIZE
 
 __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level);
+//__device__ int binomial_kernel(double p);
+//__device__ int binomial_kernel(int n, double p, curandState *state, int id);
 __device__ int binomial_kernel(int n, double p);
 __device__ double sigmoid_kernel(double x);
-__global__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p);
+__global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX);
+__global__ void dA_get_hidden_values_kernel2(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib);
 __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib);
-__global__ void dA_get_hidden_values_kernel1(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib);
-__global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
-				 double *z, double *y, int ib, int batchsize);
-__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr);
-__global__ void dA_L_hbias_kernel(int N, double *dL_vbias, double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW, 
-		int ib, int batchsize,double lr);
-__global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
-		int *tilde_x, int ib, int batchsize,double lr);
+__global__ void dA_get_hidden_values_batch_kernel2(int n_hidden, double *yb, double *y, double *dhbias);
+__global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,double *z, double *y, int ib, int batchsize);
+__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int offsetX, int batchsize,double lr);
+__global__ void dA_L_hbias_kernel(int N, double *dL_vbias, double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW,int ib, int batchsize,double lr);
+__global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW,int *tilde_x, int ib, int batchsize,double lr);
+
 /////////////////////////////////////////////////////////////////
 // train functions called from host:
 
@@ -56,8 +61,8 @@ __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double co
 
 ////////////////////////////////////////////////////////////////
 // helper functions needed by the training function
-
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
+//*
 __device__ int binomial_kernel(int n, double p) {
   if (p < 0 || p > 1) return 0;
 
@@ -70,170 +75,272 @@ __device__ int binomial_kernel(int n, double p) {
   double r;
 
   for (i = 0; i < n; ++i) {
+    //r = curand_uniform_double(&state);  // should be between 0 and 1
     r = curand_uniform_double(&state);  // should be between 0 and 1
+    if (r < p) c = 1;
+    else c = 0;
+  }
+  return c;
+}
+//*/
+/*
+//NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
+// NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
+__device__ int binomial_kernel(int n, double p, curandState *state, int id) {
+  if (p < 0 || p > 1) return 0;
+
+  int i;
+  int c = 0;
+  double r;
+
+  for (i = 0; i < n; ++i) {
+    r = curand_uniform_double(&state[id]);  // should be between 0 and 1
     if (r < p) c++;
   }
   return c;
 }
-
-
+*/
+//
 __device__ double sigmoid_kernel(double x) {
   return 1.0 / (1.0 + exp(-x));
 }
 
+//
+//__global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX, curandState *state) {
+__global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX) {
 
-__device__ void dA_get_corrupted_input_kernel(int length, int *tilde_x, double p) {
-
-  int i = blockDim.x * blockIdx.x + threadIdx.x ;
-  if (i < length){
-  if(tilde_x[i] == 0) {
-      tilde_x[i] = 0;
-    } else {
-      tilde_x[i] = binomial_kernel(1, p);
-    }
+  // We allow each thread to load one feature of one record. So, each block will have n_visible threads
+  // while each record will be processed by a separate block in grid. So, gridsize is batch size i.e. no
+  // of records in a batch.
+  int idx = blockIdx.x*blockDim.x + threadIdx.x; // idx is a global index of each thread..
+  // random seed
+  //curand_init(1000*blockIdx.x, idx, 0, &state[idx]);
+   
+  if (idx < lenTileX) {
+  	if(x[offsetX+idx] == 0) {
+      		tilde_x[idx] = 0;
+    	} else {
+     		tilde_x[idx] = binomial_kernel(1,p);
+		//tilde_x[idx] = binomial_kernel(1, p, state, idx);
+    	}  
   }
 }
 
 
-
-__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib) {
+__global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *yb, int ib) {
 
   //*
-  //int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
-  //put W and X in SM first
-  __shared__ double dWs[N_HIDXFEATS];
-  __shared__ float ys[N_HIDDEN];
-  __shared__ int xs[BATCHSIZE*N_FEATS];
-  __shared__ double Sdhbias[N_HIDDEN];
-  int shiftXIdx = ib*BATCHSIZE*n_visible;
-  //Load data required by each thread first  
-  if (threadIdx.x < n_visible) {
-     for(int m=0; m<n_hidden;m++) {
-	dWs[m*n_visible+threadIdx.x] = dW[m*n_visible+threadIdx.x];
-     }
-     for (int m1=0;m1<BATCHSIZE;m1++) {
-     	xs[m1*BATCHSIZE+threadIdx.x] = x[shiftXIdx + m1*BATCHSIZE + threadIdx.x];
-     }
-  }
-  if (threadIdx.x < n_hidden) {
-	ys[threadIdx.x] = 0.0;
-	Sdhbias[threadIdx.x] = dhbias[threadIdx.x];
-  }
-  __syncthreads();
+  // yi = WX'
   //
-  int idx = threadIdx.x;
-  if (idx < BATCHSIZE) {  
-     for (int j=0;j<n_visible;j++) { 
-      for (int i=0; i< n_hidden; i++) {
-        ys[i] += dWs[i*n_visible+j] * xs[idx*N_FEATS+j];
-        ys[i] += Sdhbias[i];
-      }
-     }
-  }
-  __syncthreads();
-  //
+  __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
+  __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
   
-  if (threadIdx.x < n_hidden) {
-     y[threadIdx.x] = sigmoid_kernel(ys[threadIdx.x]);     
-     //y[threadIdx.x] = ys[threadIdx.x]/BATCHSIZE;     
-  }  
-  __syncthreads();
+  int bx = blockIdx.x; int by = blockIdx.y;
+  int tx = threadIdx.x; int ty = threadIdx.y;
+  int Row = by * TILE_WIDTH  + ty;
+  int Col = bx * TILE_WIDTH  + tx;
 
-}
+  int nTiles = n_visible / TILE_WIDTH; // how many to load and calculate from each matrices
+  if (n_visible % TILE_WIDTH) nTiles++;
+  float Pvalue = 0.0;
+  for (int m = 0; m < nTiles; m++) {
+    if ((Row < n_hidden) && ((m*TILE_WIDTH + tx ) < n_visible))
+	Mds[ty][tx] = dW[Row * n_visible + m*TILE_WIDTH + tx];
+    else
+	Mds[ty][tx] = 0.0;
 
-__global__ void dA_get_hidden_values_kernel1(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib) {
-  //*
-  //int idx = blockDim.x * blockIdx.x + threadIdx.x; // row in batch
-  if (threadIdx.x < BATCHSIZE) {
-    int i,j;
-    double tempYi = 0.0;
-    for (i=0; i< n_hidden; i++) {
-      tempYi = 0.0;
-      for (j=0; j< n_visible; j++) {
-        tempYi += dW[i*n_hidden+j] * x[ib*BATCHSIZE*n_visible+j];
-      }
-      tempYi += dhbias[i];
-      //atomicAdd(&y[shiftYIdx+i], dhbias[i]);
-      //y[i] = sigmoid_kernel(tempYi);
-      y[i] = sigmoid_kernel(tempYi);
+    if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_visible))
+    	Nds[ty][tx] = x[(Col*n_visible) + (m*TILE_WIDTH + ty)];
+    else
+	Nds[ty][tx] = 0.0;
+    __syncthreads();
+
+    for (int k = 0; k < TILE_WIDTH; ++k) {
+	//Pvalue += Mds[ty][k] * Nds[k][tx];
+ 	Pvalue += Mds[ty][k] * Nds[k][tx];
     }
+    __syncthreads();
+  }
+ 
+  if ((Row < n_hidden) && (Col < BATCHSIZE))  {
+  //if (((by*blockDim.y+ty) < n_hidden) && ((bx*blockDim.x+tx) < BATCHSIZE))  {
+     //y[(by * blockDim.y + ty)* 1 + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dhbias[(by * blockDim.y + ty)* n_visible + (bx * blockDim.x + tx)]);
+     //yb[(by * blockDim.y + ty)* BATCHSIZE + (bx * blockDim.x + tx)] = Pvalue;
+     //yb[(by * blockDim.y + ty) + (bx * blockDim.x + tx)*BATCHSIZE] = sigmoid_kernel(Pvalue + dhbias[Row]);
+     //yb[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dhbias[Row]);
+     yb[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dhbias[Row]);
+     //yb[Row*BATCHSIZE + Col] = Pvalue + dhbias[Row];
+     //y[ty] = sigmoid_kernel(Pvalue + dhbias[ty]);
   }
   __syncthreads();
-
+  
+  //if ((Row < n_hidden) && (Col < BATCHSIZE)) {
+  //   y[Row] = sigmoid_kernel(y[Row]/BATCHSIZE + dhbias[Row]);
+  //}
+	
 }
 
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize) {
 
-  int shiftZIdx = ib * batchsize *n_visible;
-  //
-  if (threadIdx.x < batchsize)  {
-  int i, j;
-  for(i=0; i<n_visible; i++) {
-    z[shiftZIdx+i] = 0;
-    for(j=0; j<n_hidden; j++) {
-      z[shiftZIdx+i] += dW[j*n_visible+i] * y[j];
-    }
-    z[shiftZIdx+i] += dvbias[i];
-    z[shiftZIdx+i] = sigmoid_kernel(z[shiftZIdx+i]);
-  }
-  }
-
-  __syncthreads();
-
-}
-
-
-__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int ib, int batchsize,double lr) {
-
-  int shiftZIdx = ib * batchsize *n_visible;
-  int shiftXIdx = ib * batchsize*n_visible;
+  //* W'y = visible x batch
+  __shared__ double Mds[TILE_WIDTH][TILE_WIDTH];
+  __shared__ double Nds[TILE_WIDTH][TILE_WIDTH];
   
-  double templvbias = 0.0;
-  if (threadIdx.x < batchsize)  {
-     for(int i=0; i<n_visible; i++) {
-	templvbias = x[shiftXIdx + i] - z[shiftZIdx + i];
-	dL_vbias[i] = templvbias;
-	atomicAdd(&dvbias[i],(lr*templvbias / N));
-     }
+  int bx = blockIdx.x; int by = blockIdx.y;
+  int tx = threadIdx.x; int ty = threadIdx.y;
+  int Row = by * TILE_WIDTH  + ty;
+  int Col = bx * TILE_WIDTH  + tx;
+
+  int nTiles = n_hidden / TILE_WIDTH;
+  if (n_hidden % TILE_WIDTH) nTiles++;
+  double Pvalue = 0.0;
+  for (int m = 0; m < nTiles; m++) {
+    if ((Row < n_visible) && ((m*TILE_WIDTH + tx) < n_hidden))
+    	Mds[ty][tx] = dW[(m*TILE_WIDTH+ty)*n_visible+Row];
+    else
+	Mds[ty][tx] = 0.0;
+
+    if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_hidden))
+    	Nds[ty][tx] = y[(m*TILE_WIDTH + ty)* BATCHSIZE +Col];
+    else
+	Nds[ty][tx] = 0.0;
+    __syncthreads();
+
+    for (int k = 0; k < TILE_WIDTH; ++k) {
+	Pvalue += Mds[ty][k] * Nds[k][tx];
+    }
+    __syncthreads();
+  }
+ 
+  if ((Row < n_visible) && (Col < BATCHSIZE))  {
+     z[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dvbias[Row]);
   }
   __syncthreads();
+  
+
 }
 
+//
+__global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, int *x, double *z, int offsetX, int batchsize,double lr) {
+  // We allow each thread to load one feature of one record. So, each block will have n_visible threads
+  // while each record will be processed by a separate block in grid. So, gridsize is batch size i.e. no
+  // of records in a batch.
+  int idx = blockIdx.x * n_visible + threadIdx.x; // idx is a global index of each thread..
+  double templvbias = 0.0;
+  double tempAddlvbias = 0.0;
+  if (idx < batchsize*n_visible) {
+	templvbias = x[offsetX+idx] - z[threadIdx.x*batchsize+blockIdx.x];
+	//templvbias = 0.01;
+	dL_vbias[idx] = templvbias;
+	tempAddlvbias = (templvbias * lr / N);
+	atomicAdd(&dvbias[threadIdx.x],tempAddlvbias);
+  }
+}
+
+
+// W * dL_vbias' 
+// 
 __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW, 
 		int ib, int batchsize,double lr) {
+  //*
+  // L_hbias = W x L_vbias'
+  //
+  __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
+  __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
+  
+  int bx = blockIdx.x; int by = blockIdx.y;
+  int tx = threadIdx.x; int ty = threadIdx.y;
+  int Row = by * TILE_WIDTH  + ty;
+  int Col = bx * TILE_WIDTH  + tx;
 
-  double templhbias;
-  if (threadIdx.x < batchsize)  {
-     for(int i=0; i<n_hidden; i++) {
-	templhbias = 0.0;
-	for (int j=0;j<n_visible;j++){
-	  templhbias += dW[i*n_visible+j] * dL_vbias[j];
-	}
-	templhbias *= y[i]*(1-y[i]);
-	dL_hbias[i] = templhbias;
-	atomicAdd(&dhbias[i], (lr * templhbias/N) );
-	//dhbias[i] += (lr * templhbias/N);
-     }
+  int nTiles = n_visible / TILE_WIDTH; // how many to load and calculate from each matrices
+  if (n_visible % TILE_WIDTH) nTiles++;
+  float Pvalue = 0.0;
+  for (int m = 0; m < nTiles; m++) {
+    if ((Row < n_hidden) && ((m*TILE_WIDTH + tx ) < n_visible))
+	Mds[ty][tx] = dW[Row * n_visible + m*TILE_WIDTH + tx];
+    else
+	Mds[ty][tx] = 0.0;
+
+    if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_visible))
+    	Nds[ty][tx] = dL_vbias[(Col*n_visible) + (m*TILE_WIDTH + ty)];
+    else
+	Nds[ty][tx] = 0.0;
+    __syncthreads();
+
+    for (int k = 0; k < TILE_WIDTH; ++k) {
+	//Pvalue += Mds[ty][k] * Nds[k][tx];
+ 	Pvalue += Mds[ty][k] * Nds[k][tx];
+    }
+    __syncthreads();
+  }
+ 
+  if ((Row < n_hidden) && (Col < BATCHSIZE))  {
+     //
+     double yi = 0.0;
+     double templhbias = 0.0;
+     //yi = y[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)];
+     yi = y[Row];
+     templhbias = Pvalue * yi * (1 - yi);
+     //dL_hbias[Row*BATCHSIZE + Col] = templhbias;
+     dL_hbias[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = templhbias;
+     //atomicAdd(&dhbias[by * blockDim.y + ty],(lr*templhbias/N));
+     atomicAdd(&dhbias[Row],(lr*templhbias/ N));
   }
   __syncthreads();
+  
 }
 
-__global__ void dA_W_kernel(int N,double *dL_vbias,double *dL_hbias, int n_hidden, int n_visible, double *y, double *dW, 
+//
+/*
+__global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
 		int *tilde_x, int ib, int batchsize,double lr) {
-
-  int shiftTildeXIdx = ib * batchsize *  n_visible;
-  double tempVal;
-  if (threadIdx.x < batchsize)  {
-     for(int i=0; i<n_hidden; i++) {
-	tempVal = 0.0;
-	for (int j=0;j<n_visible;j++){
-	  tempVal = lr * (dL_hbias[i]*tilde_x[shiftTildeXIdx+j] + dL_vbias[j]*y[i]) / N;
-	  atomicAdd(&dW[i*n_visible+j], tempVal);
-	}
-     }
-  }
-  __syncthreads();
+  // We will try to use hidden elements in global memory and try to put visible dimensions in shared memory
+  //int i = blockIdx.x * blockDim.x + threadIdx.x;
+  __shared__ double tilde_x_s[N_FEATS];
+  __shared__ double dL_vbias_s[N_FEATS];
+  //
+  // One hidden row in one block to be processed sp we are done with one row at once
+  // first load two elements
+ tilde_x_s[threadIdx.x] = tilde_x[threadIdx.x];
+ dL_vbias_s[threadIdx.x] = dL_vbias[threadIdx.x];
+ 
+ double tempVal = 0.0;
+ if (blockIdx.x < N_HIDDEN){
+ 	tempVal = dL_hbias[blockIdx.x] * tilde_x_s[threadIdx.x];
+     	tempVal += yb[blockIdx.x] * dL_vbias_s[threadIdx.x];
+     	tempVal *= lr / N;     
+     	atomicAdd(&dW[blockIdx.x*n_visible+threadIdx.x], tempVal);
+ }
+  
 }
-
+*/
+//
+//
+__global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
+		int *tilde_x, int ib, int batchsize,double lr) {
+  // We will try to use hidden elements in global memory and try to put visible dimensions in shared memory
+  //int i = blockIdx.x * blockDim.x + threadIdx.x;
+  __shared__ double tilde_x_s[N_FEATS];
+  __shared__ double dL_vbias_s[N_FEATS];
+  //
+  // One hidden row in one block to be processed sp we are done with one row at once
+  // first load two elements
+ for (int batchIdx = 0; batchIdx < batchsize; batchIdx++){
+ 	tilde_x_s[threadIdx.x] = tilde_x[batchIdx*N_FEATS+threadIdx.x];
+ 	dL_vbias_s[threadIdx.x] = dL_vbias[batchIdx*N_FEATS+threadIdx.x];
+ 	__syncthreads();
+ 	double tempVal = 0.0;
+ 	if (blockIdx.x < N_HIDDEN){
+ 		tempVal = dL_hbias[blockIdx.x*batchsize+batchIdx] * tilde_x_s[threadIdx.x];
+     		tempVal += yb[blockIdx.x*batchsize+batchIdx] * dL_vbias_s[threadIdx.x];
+     		tempVal *= lr / N;     
+     		atomicAdd(&dW[blockIdx.x*n_visible+threadIdx.x], tempVal);
+ 	}
+	__syncthreads();	
+}
+  
+}
+//
 #endif // #ifndef _DA_KERNEL_H_
