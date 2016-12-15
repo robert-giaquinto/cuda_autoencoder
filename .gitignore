@@ -8,3 +8,4 @@ t10k-labels-idx1-ubyte
 train-labels-idx1-ubyte
 *.csv
 *.pyc
+mnist*.txt
