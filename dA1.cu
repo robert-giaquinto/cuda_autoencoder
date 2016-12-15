@@ -333,7 +333,7 @@ void dA_train_on_device1(dA *model_h, int train_X[N_OBS][N_FEATS], double lr, do
 		if (BATCHSIZE % n33Threads) m33Blocks++;
 		dim3 dimGrid33(m33Blocks, n33Blocks);
 		dim3 dimBlock33(n33Threads,n33Threads);
-    		//dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
+    		 //dA_get_reconstructed_input_kernel<<<dimGrid2,dimBlock2>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,y_d,ib,BATCHSIZE);
     		dA_get_reconstructed_input_kernel<<<dimGrid33,dimBlock33>>>(N_HIDDEN,N_FEATS,dW_flat,dvbias,z_d,yb_d,ib,BATCHSIZE);
   		cuda_ret = cudaDeviceSynchronize();
  		if (cuda_ret != cudaSuccess)
@@ -501,7 +501,8 @@ void test_dbn(void) {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0}
   };
   */
-  //*  To increase size of array for testing
+  //*
+  //  To increase size of array for testing
   int train_X[N_OBS][N_FEATS];
   for (int i1=0;i1<N_OBS;i1++) {
    for (int i2=0;i2<N_FEATS;i2++) {
@@ -510,6 +511,7 @@ void test_dbn(void) {
    }
   printf("training input : %f %f\n",train_X[0][0],train_X[N_OBS-1][N_FEATS-1]);
   //*/
+  //
 
   // construct dA
   dA da_gold, da_h;
@@ -523,6 +525,7 @@ void test_dbn(void) {
 	da_h.W_flat[i*n_visible+j] = da_gold.W_flat[i*n_visible+j];
     }
   }
+  //
   //*** to compare, initial values should be same for both the objects
   printf("da_gold W      : %f %f %f \n", da_gold.W[0][0],da_gold.W[0][1],da_gold.W[0][2]);
   printf("da_h W         : %f %f %f \n", da_h.W[0][0],da_h.W[0][1],da_h.W[0][2]);
@@ -530,7 +533,7 @@ void test_dbn(void) {
   printf("da_h W_flat    : %f %f %f \n", da_h.W_flat[0],da_h.W_flat[1],da_h.W_flat[2]);
   printf("da_gold n_visi : %d \n", da_gold.n_visible);
   printf("da_h n_visible : %d \n", da_h.n_visible);
-     printf("da_gold hbias  : %f %f %f \n",da_gold.hbias[0],da_gold.hbias[1],da_gold.hbias[2]);
+  printf("da_gold hbias  : %f %f %f \n",da_gold.hbias[0],da_gold.hbias[1],da_gold.hbias[2]);
   printf("da_h hbias     : %f %f %f \n",da_h.hbias[0],da_h.hbias[1],da_h.hbias[2]);
   printf("da_gold vbias  : %f %f %f \n",da_gold.vbias[0],da_gold.vbias[1],da_gold.vbias[2]);
   printf("da_h vbias     : %f %f %f \n",da_h.vbias[0],da_h.vbias[1],da_h.vbias[2]);
@@ -595,14 +598,14 @@ void test_dbn(void) {
         train_X[i1][i2] = rand() % 2;
      }
    }
-  //* Endof test data
+  //*/
   double reconstructed_X[2][N_FEATS];
 
   printf("\n : CPU test now: \n");
   // test CPU using &da_gold object
   for(i=0; i<test_N; i++) {
     dA_reconstruct(&da_gold, test_X[i], reconstructed_X[i]);
-    //for(j=0; j<n_visible; j++) { printf("%.5f ", reconstructed_X[i][j]);}
+    for(j=0; j<n_visible; j++) { printf("%.5f ", reconstructed_X[i][j]);}
     printf("\n");
   }
 
@@ -610,17 +613,17 @@ void test_dbn(void) {
   // test GPU using &da_h object
   for(i=0; i<test_N; i++) {
     dA_reconstruct(&da_h, test_X[i], reconstructed_X[i]);
-    //for(j=0; j<n_visible; j++) {printf("%.5f ", reconstructed_X[i][j]);}
+    for(j=0; j<n_visible; j++) {printf("%.5f ", reconstructed_X[i][j]);}
     printf("\n");
   }
 
   // destruct dA
   dA__destruct(&da_gold);
   dA__destruct(&da_h);
-  //
-  printf("Host time  : %f\n", host_time);
-  printf("Device time: %f\n", device_time);
-  printf("Speedup    : %fX\n", host_time/device_time);
+    //
+  printf("Host time          : %f\n", host_time);
+  printf("Device time        : %f\n", device_time);
+  printf("Speedup host/device: %fX\n", host_time/device_time);
   printf("***testing over***\n");
 
 }

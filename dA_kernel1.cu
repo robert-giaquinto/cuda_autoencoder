@@ -11,11 +11,11 @@
 //#define N_FEATS 20
 #define N_FEATS 784
 #define N_OBS 100
-#define BATCHSIZE 1
+#define BATCHSIZE 2
 //#define N_HIDDEN 5
 #define N_HIDDEN 100
 #define N_HIDXFEATS (N_HIDDEN*N_FEATS)
-#define BLOCKSIZE 1
+#define BLOCKSIZE 2
 #define TILE_WIDTH BLOCKSIZE
 
 __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level);
@@ -292,26 +292,8 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
   
 }
 
-/*
-
-__global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
-		int *tilde_x, int ib, int batchsize,double lr) {
-
-  int tx = threadIdx.x;
-  double tempVal;
-  if (tx < batchsize)  {
-     for(int i=0; i<n_hidden; i++) {
-	tempVal = 0.0;
-	for (int j=0;j<n_visible;j++){
-	  tempVal = lr * (dL_hbias[i]*tilde_x[j] + dL_vbias[j]*yb[i]) / N;
-	  atomicAdd(&dW[i*n_visible+j], tempVal);
-	}
-     }
-  }
-  __syncthreads();
-}
-*/
 //
+/*
 __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
 		int *tilde_x, int ib, int batchsize,double lr) {
   // We will try to use hidden elements in global memory and try to put visible dimensions in shared memory
@@ -331,6 +313,33 @@ __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hid
      	tempVal *= lr / N;     
      	atomicAdd(&dW[blockIdx.x*n_visible+threadIdx.x], tempVal);
  }
+  
+}
+*/
+//
+//
+__global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
+		int *tilde_x, int ib, int batchsize,double lr) {
+  // We will try to use hidden elements in global memory and try to put visible dimensions in shared memory
+  //int i = blockIdx.x * blockDim.x + threadIdx.x;
+  __shared__ double tilde_x_s[N_FEATS];
+  __shared__ double dL_vbias_s[N_FEATS];
+  //
+  // One hidden row in one block to be processed sp we are done with one row at once
+  // first load two elements
+ for (int batchIdx = 0; batchIdx < batchsize; batchIdx++){
+ 	tilde_x_s[threadIdx.x] = tilde_x[batchIdx*N_FEATS+threadIdx.x];
+ 	dL_vbias_s[threadIdx.x] = dL_vbias[batchIdx*N_FEATS+threadIdx.x];
+ 	__syncthreads();
+ 	double tempVal = 0.0;
+ 	if (blockIdx.x < N_HIDDEN){
+ 		tempVal = dL_hbias[blockIdx.x*batchsize+batchIdx] * tilde_x_s[threadIdx.x];
+     		tempVal += yb[blockIdx.x*batchsize+batchIdx] * dL_vbias_s[threadIdx.x];
+     		tempVal *= lr / N;     
+     		atomicAdd(&dW[blockIdx.x*n_visible+threadIdx.x], tempVal);
+ 	}
+	__syncthreads();	
+}
   
 }
 //
