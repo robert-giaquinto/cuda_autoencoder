@@ -8,17 +8,20 @@
 #include "dA.h" // dA struct
 
 #define RANDOM_MAX 100
-#define N_FEATS 20
-#define N_OBS 10
+//#define N_FEATS 20
+#define N_FEATS 784
+#define N_OBS 100
 #define BATCHSIZE 1
-#define N_HIDDEN 5
+//#define N_HIDDEN 5
+#define N_HIDDEN 100
 #define N_HIDXFEATS (N_HIDDEN*N_FEATS)
 #define BLOCKSIZE 1
 #define TILE_WIDTH BLOCKSIZE
 
 __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level);
 //__device__ int binomial_kernel(double p);
-__device__ int binomial_kernel(int n, double p, curandState *state, int id);
+//__device__ int binomial_kernel(int n, double p, curandState *state, int id);
+__device__ int binomial_kernel(int n, double p);
 __device__ double sigmoid_kernel(double x);
 __global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX);
 __global__ void dA_get_hidden_values_kernel2(int n_hidden, int n_visible, double *dW, double *dhbias, int *x, double *y, int ib);
@@ -59,7 +62,7 @@ __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double co
 ////////////////////////////////////////////////////////////////
 // helper functions needed by the training function
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
-/*
+//*
 __device__ int binomial_kernel(int n, double p) {
   if (p < 0 || p > 1) return 0;
 
@@ -79,7 +82,8 @@ __device__ int binomial_kernel(int n, double p) {
   }
   return c;
 }
-*/
+//*/
+/*
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
 // NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
 __device__ int binomial_kernel(int n, double p, curandState *state, int id) {
@@ -95,28 +99,29 @@ __device__ int binomial_kernel(int n, double p, curandState *state, int id) {
   }
   return c;
 }
-
+*/
 //
 __device__ double sigmoid_kernel(double x) {
   return 1.0 / (1.0 + exp(-x));
 }
 
 //
-__global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX, curandState *state) {
+//__global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX, curandState *state) {
+__global__ void dA_get_corrupted_input_kernel(int lenTileX, int *x, int *tilde_x, double p, int offsetX) {
 
   // We allow each thread to load one feature of one record. So, each block will have n_visible threads
   // while each record will be processed by a separate block in grid. So, gridsize is batch size i.e. no
   // of records in a batch.
   int idx = blockIdx.x*blockDim.x + threadIdx.x; // idx is a global index of each thread..
   // random seed
-  curand_init(1000*blockIdx.x, idx, 0, &state[idx]);
+  //curand_init(1000*blockIdx.x, idx, 0, &state[idx]);
    
   if (idx < lenTileX) {
   	if(x[offsetX+idx] == 0) {
       		tilde_x[idx] = 0;
     	} else {
-     		//tilde_x[idx] = binomial_kernel(1,p);
-		tilde_x[idx] = binomial_kernel(1, p, state, idx);
+     		tilde_x[idx] = binomial_kernel(1,p);
+		//tilde_x[idx] = binomial_kernel(1, p, state, idx);
     	}  
   }
 }
@@ -287,6 +292,7 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
   
 }
 
+/*
 
 __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
 		int *tilde_x, int ib, int batchsize,double lr) {
@@ -303,6 +309,29 @@ __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hid
      }
   }
   __syncthreads();
+}
+*/
+//
+__global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
+		int *tilde_x, int ib, int batchsize,double lr) {
+  // We will try to use hidden elements in global memory and try to put visible dimensions in shared memory
+  //int i = blockIdx.x * blockDim.x + threadIdx.x;
+  __shared__ double tilde_x_s[N_FEATS];
+  __shared__ double dL_vbias_s[N_FEATS];
+  //
+  // One hidden row in one block to be processed sp we are done with one row at once
+  // first load two elements
+ tilde_x_s[threadIdx.x] = tilde_x[threadIdx.x];
+ dL_vbias_s[threadIdx.x] = dL_vbias[threadIdx.x];
+ 
+ double tempVal = 0.0;
+ if (blockIdx.x < N_HIDDEN){
+ 	tempVal = dL_hbias[blockIdx.x] * tilde_x_s[threadIdx.x];
+     	tempVal += yb[blockIdx.x] * dL_vbias_s[threadIdx.x];
+     	tempVal *= lr / N;     
+     	atomicAdd(&dW[blockIdx.x*n_visible+threadIdx.x], tempVal);
+ }
+  
 }
 //
 #endif // #ifndef _DA_KERNEL_H_
