@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <vector>
+#include <iostream>
+#include <fstream>
 
 // includes, project
 #include <cutil.h>
@@ -24,8 +27,9 @@ void dA__destruct(dA *model);
 void dA_reconstruct(dA *model, float *x, double *z, bool flat);
 void test_dbn();
 
-void dA_train_on_device(dA*, float[][N_FEATS], double, double, int);
-float* flatten_array(float arr[N_OBS][N_FEATS]);
+//void dA_train_on_device(dA*, float[][N_FEATS], double, double, int);
+void dA_train_on_device(dA*, float*, double, double, int);
+float* flatten_array(float arr[][N_FEATS], int n_rows);
 float* allocate_device_x();
 dA init_device_ae(const dA model_h);
 void copy_x_to_device(float *x_d, float *x_h);
@@ -108,15 +112,42 @@ void dA_reconstruct(dA* model, float *x, double *z, bool flat) {
 
 
 
-int read_file(float *arr, char* filename) {
-  unsigned int data_size = N_OBS * N_FEATS;
-  cutReadFilef(filename, &arr, &data_size, true);
-  return (data_size != (N_OBS * N_FEATS));
+int read_file(float *arr, const char* filename, int n_rows) {
+  // initialize the data, is this still needed?
+  for (int i=0; i < n_rows * N_FEATS; ++i) {
+    arr[i] = 0.0f;
+  }
+
+  unsigned int data_size = n_rows * N_FEATS;
+
+  // intermediate storage for the data read
+  std::vector<float>  data_read;
+  
+  // open file for reading
+  std::fstream fh( filename, std::fstream::in);
+  // read data elements 
+  float token;
+  for (int i=0; i < data_size; ++i) {
+    fh >> token;
+    data_read.push_back(token);
+    if (fh.good() == 0) {
+      std::cerr << "FILE HANDLE NOT GOOD" << std::endl;
+      return 1;
+    }
+  }
+    
+  // the last element is read twice
+  fh.close();
+  
+  // copy data
+  memcpy(arr, &data_read.front(), sizeof(float) * data_read.size());  
+  return 0;
 }
 
-float* flatten_array(float arr[N_OBS][N_FEATS]) {
-  float *flat = (float *)malloc(sizeof(float) * N_OBS * N_FEATS);
-  for (int i=0; i < N_OBS; ++i) {
+
+float* flatten_array(float arr[][N_FEATS], int n_rows) {
+  float *flat = (float *)malloc(sizeof(float) * n_rows * N_FEATS);
+  for (int i=0; i < n_rows; ++i) {
     for (int j=0; j < N_FEATS; ++j) {
       flat[i*N_FEATS + j] = arr[i][j];
     }
@@ -186,19 +217,16 @@ void free_device(dA *model) {
 }
   
 
-void dA_train_on_device(dA *model_h, float train_X[][N_FEATS], double learning_rate, double corruption_level, int epochs) {
+void dA_train_on_device(dA *model_h, float *train_X, double learning_rate, double corruption_level, int epochs) {
   // call kernel function from here
-  // assign one observation to each block, each thread parallelizes a feature
-  
-  // flatten input array
-  float *X_h = flatten_array(train_X);
+  // assign one observation to each block, each thread parallelizes a featires
 
   // allocate space on device
   float *X_d = allocate_device_x();
   dA model_d = init_device_ae(*model_h);
 
   // copy data over to device
-  copy_x_to_device(X_d, X_h);
+  copy_x_to_device(X_d, train_X);
 
   // define kernel dimensions
   dim3 dim_grid(BATCH_SIZE, 1, 1);
@@ -220,16 +248,16 @@ void dA_train_on_device(dA *model_h, float train_X[][N_FEATS], double learning_r
   copy_ae_from_device(model_h, model_d);
 
   // free up memory
-  free(X_h);
+  //free(X_h);
   free_device(&model_d);
   cudaFree(d_state);
 }
 
 
-void print_reconstruction(dA *model, float X[N_TEST][N_FEATS], bool flat) {
+void print_reconstruction(dA *model, float *X, bool flat) {
   double reconstructed_X[N_TEST][N_FEATS];
   for(int i=0; i < N_TEST; i++) {
-    dA_reconstruct(model, X[i], reconstructed_X[i], flat);
+    dA_reconstruct(model, &X[i*N_FEATS], reconstructed_X[i], flat);
     for(int j=0; j < N_FEATS; j++) {
       printf("%.5f ", reconstructed_X[i][j]);
     }
@@ -259,35 +287,12 @@ void test_dbn(void) {
   int training_epochs = 100;
 
   // training data
-  /*
-  int train_X[N_OBS][N_FEATS] = {
-    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0}
-  };
-  */
-  float train_X[N_OBS][N_FEATS] = {
-    {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0}
-  };
-
-
-
+  float *train_X = (float*)malloc(sizeof(float) * N_OBS * N_FEATS);
+  int error_train = 0;
+  error_train = read_file(train_X, "/home/class/smit7982/app/C/src/ee5351/simple_train.txt", N_OBS);
+  if (error_train) {
+    printf("Error reading training input file");
+  }
 
   // construct dA
   dA da_gold, da_h;
@@ -298,31 +303,20 @@ void test_dbn(void) {
   // train using gold standard
   for(int epoch=0; epoch<training_epochs; epoch++) {
     for(int i=0; i < N_OBS; i++) {
-      dA_train_gold(&da_gold, train_X[i], learning_rate, corruption_level);
+      dA_train_gold(&da_gold, &train_X[i*N_FEATS], learning_rate, corruption_level);
     }
   }
   
   // train using kernel
   dA_train_on_device(&da_h, train_X, learning_rate, corruption_level, training_epochs);
 
-
-  // print model parameters after training
-  print_W(&da_gold, 0);
-  print_W(&da_h, 1);
-
-
   // test data
-  /*
-  int test_X[2][N_FEATS] = {
-    {1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0}
-  };
-  */
-  float test_X[N_TEST][N_FEATS] = {
-    {1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0}
-  };
-
+  float *test_X = (float*)malloc(sizeof(float) * N_TEST * N_FEATS);
+  int error_test = 0;
+  error_test = read_file(test_X, "/home/class/smit7982/app/C/src/ee5351/simple_test.txt", N_TEST);
+  if (error_test) {
+    printf("Error reading test input file");
+  }
 
   // test
   printf("\nGold test output:\n");
