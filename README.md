@@ -7,6 +7,9 @@ http://timdettmers.com/2014/10/09/deep-learning-data-parallelism/
 
 http://link.springer.com/chapter/10.1007/978-3-642-31656-2_140
 
+2008 Paper on Denoising Autoencoders:
+https://www.iro.umontreal.ca/~vincentp/Publications/denoising_autoencoders_tr1316.pdf
+
 
 # Getting Started
 1. Unzip each of the MNIST data files via `gunzip <FILE NAME>`.
