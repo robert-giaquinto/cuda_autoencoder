@@ -12,8 +12,8 @@
 
 // declarations for CPU train functions
 extern "C"
-void dA_train_gold(dA*, int*, double, double);
-void dA_get_hidden_values(dA*, int*, double*, bool);
+void dA_train_gold(dA*, float*, double, double);
+void dA_get_hidden_values(dA*, float*, double*, bool);
 void dA_get_reconstructed_input(dA*, double*, double*, bool);
 
 
@@ -21,17 +21,19 @@ void dA_get_reconstructed_input(dA*, double*, double*, bool);
 double uniform(double min, double max);
 void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, double *hbias, double *vbais);
 void dA__destruct(dA *model);
-void dA_reconstruct(dA *model, int *x, double *z, bool flat);
+void dA_reconstruct(dA *model, float *x, double *z, bool flat);
 void test_dbn();
 
-void dA_train_on_device(dA*, int[][N_FEATS], double, double, int);
-int* flatten_array(int arr[N_OBS][N_FEATS]);
-int* allocate_device_x();
+void dA_train_on_device(dA*, float[][N_FEATS], double, double, int);
+float* flatten_array(float arr[N_OBS][N_FEATS]);
+float* allocate_device_x();
 dA init_device_ae(const dA model_h);
-void copy_x_to_device(int *x_d, int *x_h);
+void copy_x_to_device(float *x_d, float *x_h);
 void copy_ae_from_device(dA *model_h, const dA model_d);
 void free_device(dA *model);
-void print_reconstruction(dA, int[2][N_FEATS], bool);
+void print_reconstruction(dA, float[N_TEST][N_FEATS], bool);
+int read_file(float *X, char *filename);
+
 
 // Begin definign functions
 double uniform(double min, double max) {
@@ -95,7 +97,7 @@ void dA__destruct(dA* model) {
 }
 
 
-void dA_reconstruct(dA* model, int *x, double *z, bool flat) {
+void dA_reconstruct(dA* model, float *x, double *z, bool flat) {
   double *y = (double *)malloc(sizeof(double) * model->n_hidden);
 
   dA_get_hidden_values(model, x, y, flat);
@@ -105,8 +107,15 @@ void dA_reconstruct(dA* model, int *x, double *z, bool flat) {
 }
 
 
-int* flatten_array(int arr[N_OBS][N_FEATS]) {
-  int *flat = (int *)malloc(sizeof(int) * N_OBS * N_FEATS);
+
+int read_file(float *arr, char* filename) {
+  unsigned int data_size = N_OBS * N_FEATS;
+  cutReadFilef(filename, &arr, &data_size, true);
+  return (data_size != (N_OBS * N_FEATS));
+}
+
+float* flatten_array(float arr[N_OBS][N_FEATS]) {
+  float *flat = (float *)malloc(sizeof(float) * N_OBS * N_FEATS);
   for (int i=0; i < N_OBS; ++i) {
     for (int j=0; j < N_FEATS; ++j) {
       flat[i*N_FEATS + j] = arr[i][j];
@@ -116,9 +125,9 @@ int* flatten_array(int arr[N_OBS][N_FEATS]) {
 }
 
 
-int * allocate_device_x() {
-  int *x_d = NULL;
-  int size = N_OBS * N_FEATS * sizeof(int);
+float * allocate_device_x() {
+  float *x_d = NULL;
+  int size = N_OBS * N_FEATS * sizeof(float);
   cudaMalloc((void**)&x_d, size);
   return x_d;
 }
@@ -151,7 +160,7 @@ dA init_device_ae(const dA model_h) {
   return model_d;
 }
 
-void copy_x_to_device(int *x_d, int *x_h) {
+void copy_x_to_device(float *x_d, float *x_h) {
   int size = N_OBS * N_FEATS * sizeof(int);
   cudaMemcpy(x_d, x_h, size, cudaMemcpyHostToDevice);
 }
@@ -177,15 +186,15 @@ void free_device(dA *model) {
 }
   
 
-void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rate, double corruption_level, int epochs) {
+void dA_train_on_device(dA *model_h, float train_X[][N_FEATS], double learning_rate, double corruption_level, int epochs) {
   // call kernel function from here
   // assign one observation to each block, each thread parallelizes a feature
   
   // flatten input array
-  int *X_h = flatten_array(train_X);
+  float *X_h = flatten_array(train_X);
 
   // allocate space on device
-  int *X_d = allocate_device_x();
+  float *X_d = allocate_device_x();
   dA model_d = init_device_ae(*model_h);
 
   // copy data over to device
@@ -217,9 +226,9 @@ void dA_train_on_device(dA *model_h, int train_X[][N_FEATS], double learning_rat
 }
 
 
-void print_reconstruction(dA *model, int X[2][N_FEATS], bool flat) {
-  double reconstructed_X[2][N_FEATS];
-  for(int i=0; i < 2; i++) {
+void print_reconstruction(dA *model, float X[N_TEST][N_FEATS], bool flat) {
+  double reconstructed_X[N_TEST][N_FEATS];
+  for(int i=0; i < N_TEST; i++) {
     dA_reconstruct(model, X[i], reconstructed_X[i], flat);
     for(int j=0; j < N_FEATS; j++) {
       printf("%.5f ", reconstructed_X[i][j]);
@@ -245,18 +254,12 @@ void print_W(dA *model, bool flat) {
 
 void test_dbn(void) {
   srand(0);
-  int i, j, epoch;
-
   double learning_rate = 0.1;
   double corruption_level = 0.3;
   int training_epochs = 100;
 
-  int train_N = N_OBS;
-  int test_N = 2;
-  int n_visible = N_FEATS;
-  int n_hidden = N_HIDDEN;
-
   // training data
+  /*
   int train_X[N_OBS][N_FEATS] = {
     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -269,16 +272,32 @@ void test_dbn(void) {
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0}
   };
+  */
+  float train_X[N_OBS][N_FEATS] = {
+    {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0}
+  };
+
+
+
 
   // construct dA
   dA da_gold, da_h;
-  dA__construct(&da_gold, train_N, n_visible, n_hidden, NULL, NULL, NULL);
-  dA__construct(&da_h, train_N, n_visible, n_hidden, NULL, NULL, NULL);
+  dA__construct(&da_gold, N_OBS, N_FEATS, N_HIDDEN, NULL, NULL, NULL);
+  dA__construct(&da_h, N_OBS, N_FEATS, N_HIDDEN, NULL, NULL, NULL);
 
 
   // train using gold standard
-  for(epoch=0; epoch<training_epochs; epoch++) {
-    for(i=0; i<train_N; i++) {
+  for(int epoch=0; epoch<training_epochs; epoch++) {
+    for(int i=0; i < N_OBS; i++) {
       dA_train_gold(&da_gold, train_X[i], learning_rate, corruption_level);
     }
   }
@@ -293,10 +312,17 @@ void test_dbn(void) {
 
 
   // test data
+  /*
   int test_X[2][N_FEATS] = {
     {1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0}
   };
+  */
+  float test_X[N_TEST][N_FEATS] = {
+    {1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0}
+  };
+
 
   // test
   printf("\nGold test output:\n");

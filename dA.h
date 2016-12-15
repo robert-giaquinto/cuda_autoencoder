@@ -3,7 +3,8 @@
 
 #define N_FEATS 20
 #define N_OBS 10
-#define BATCH_SIZE 5
+#define N_TEST 2
+#define BATCH_SIZE 1
 #define N_HIDDEN 5
 #define RANDOM_MAX 100
 

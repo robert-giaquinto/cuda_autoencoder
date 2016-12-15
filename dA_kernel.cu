@@ -8,11 +8,11 @@
 #include "dA.h" // dA struct
 
 
-__global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double corruption_level, int iter, curandState *state);
-__device__ int binomial_kernel(int n, double p, curandState *state, int id);
+__global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state);
+__device__ float binomial_kernel(int n, double p, curandState *state, int id);
 __device__ double sigmoid_kernel(double x);
-__device__ void dA_get_corrupted_input_kernel(dA *model, int *x, int *tilde_x, double p);
-__device__ void dA_get_hidden_values_kernel(dA *model, int *x, double *y);
+__device__ void dA_get_corrupted_input_kernel(dA *model, float *x, float *tilde_x, double p);
+__device__ void dA_get_hidden_values_kernel(dA *model, float *x, double *y);
 __device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
 
 __device__ double atomicAdd(double* address, double val);
@@ -22,7 +22,7 @@ __device__ double atomicMultiply(double* address, double val);
 // train functions called from host:
 
 // 1. using global memory, intermediate results may as well be in shared
-__global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double corruption_level, int iter, curandState *state) {
+__global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state) {
   int bid = blockIdx.x;
   int tid = threadIdx.x;
   // skip rows corresponding to previous mini-batches
@@ -41,7 +41,7 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
   }
   __syncthreads();
   // tilde_x: da_get_corrupted_input()
-  __shared__ int tilde_x[N_FEATS];
+  __shared__ float tilde_x[N_FEATS];
   if (X_d[start + bid*N_FEATS + tid] == 0) {
     tilde_x[tid] = 0;
   } else {
@@ -102,7 +102,7 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
 
   // Update weights
   for (int h=0; h < N_HIDDEN; ++h) {
-    atomicAdd(&model.W_flat[h*N_FEATS + tid], learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N / BATCH_SIZE);
+    atomicAdd(&model.W_flat[h*N_FEATS + tid], learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / (double)model.N / (double)BATCH_SIZE);
     //model.W_flat[h * N_FEATS + tid] += learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N;
   }
 
@@ -115,16 +115,16 @@ __global__ void dA_train_kernel(dA model, int *X_d, double learning_rate, double
 
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
 // NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
-__device__ int binomial_kernel(int n, double p, curandState *state, int id) {
+__device__ float binomial_kernel(int n, double p, curandState *state, int id) {
   if (p < 0 || p > 1) return 0;
 
   int i;
-  int c = 0;
+  float c = 0.0f;
   double r;
 
   for (i = 0; i < n; ++i) {
     r = curand_uniform_double(&state[id]);  // should be between 0 and 1
-    if (r < p) c++;
+    if (r < p) c += 1.0f;
   }
   return c;
 }

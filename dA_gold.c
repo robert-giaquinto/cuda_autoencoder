@@ -4,24 +4,24 @@
 
 // export C interface
 extern "C"
-void dA_train_gold(dA*, int*, double, double);
-void dA_get_corrupted_input(dA*, int*, int*, double);
-void dA_get_hidden_values(dA*, int*, double*, bool);
+void dA_train_gold(dA*, float*, double, double);
+void dA_get_corrupted_input(dA*, float*, float*, double);
+void dA_get_hidden_values(dA*, float*, double*, bool);
 void dA_get_reconstructed_input(dA*, double*, double*, bool);
-int binomial(int n, double p);
+float binomial(int n, double p);
 double sigmoid(double x);
 
 
-int binomial(int n, double p) {
+float binomial(int n, double p) {
   if(p < 0 || p > 1) return 0;
 
   int i;
-  int c = 0;
+  float c = 0.0f;
   double r;
 
   for(i=0; i<n; i++) {
     r = rand() / (RAND_MAX + 1.0);
-    if (r < p) c++;
+    if (r < p) c += 1.0f;
   }
 
   return c;
@@ -32,7 +32,7 @@ double sigmoid(double x) {
   return 1.0 / (1.0 + exp(-x));
 }
 
-void dA_get_corrupted_input(dA* model, int *x, int *tilde_x, double p) {
+void dA_get_corrupted_input(dA* model, float *x, float *tilde_x, double p) {
   int i;
   for(i=0; i<model->n_visible; i++) {
     if(x[i] == 0) {
@@ -45,7 +45,7 @@ void dA_get_corrupted_input(dA* model, int *x, int *tilde_x, double p) {
 
 
 // Encode
-void dA_get_hidden_values(dA* model, int *x, double *y, bool flat) {
+void dA_get_hidden_values(dA* model, float *x, double *y, bool flat) {
   int i,j;
   for(i=0; i<model->n_hidden; i++) {
     y[i] = 0;
@@ -82,10 +82,10 @@ void dA_get_reconstructed_input(dA* model, double *y, double *z, bool flat) {
 
 
 // Train for one observation
-void dA_train_gold(dA* model, int *x, double lr, double corruption_level) {
+void dA_train_gold(dA* model, float *x, double lr, double corruption_level) {
   int i, j;
 
-  int *tilde_x = (int *)malloc(sizeof(int) * model->n_visible);
+  float *tilde_x = (float *)malloc(sizeof(float) * model->n_visible);
   double *y = (double *)malloc(sizeof(double) * model->n_hidden);
   double *z = (double *)malloc(sizeof(double) * model->n_visible);
 
