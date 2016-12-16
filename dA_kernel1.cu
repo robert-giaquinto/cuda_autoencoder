@@ -11,13 +11,13 @@
 //#define N_FEATS 20
 #define N_FEATS 784
 //#define N_OBS 10
-#define N_OBS 10
+#define N_OBS 100
 #define N_TEST 2
 #define BATCHSIZE 1
 //#define N_HIDDEN 5
-#define N_HIDDEN 100
+#define N_HIDDEN 128
 #define N_HIDXFEATS (N_HIDDEN*N_FEATS)
-#define BLOCKSIZE 1
+#define BLOCKSIZE 16
 #define TILE_WIDTH BLOCKSIZE
 
 __global__ void dA_train_kernel(dA da, float *X_d, double learning_rate, double corruption_level);

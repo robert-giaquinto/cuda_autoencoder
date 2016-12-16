@@ -2,6 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <vector>
+#include <iostream>
+#include <fstream>
+
 
 // includes, project
 #include <cutil.h>
@@ -30,11 +34,42 @@ void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, do
 void dA__destruct(dA *model);
 void dA_reconstruct(dA *model, float *x, double *z);
 void test_dbn();
-void dA_train_on_device(dA*, float[][N_FEATS], double, double);
+void dA_train_on_device1(dA*, float*, double, double);
 
- // Temporary testing
+// MNIST and simple file load
+int read_file(float *arr, const char* filename, int n_rows) {
+  // initialize the data, is this still needed?
+  for (int i=0; i < n_rows * N_FEATS; ++i) {
+    arr[i] = 0.0f;
+  }
 
-//* end of temporary testing
+  unsigned int data_size = n_rows * N_FEATS;
+
+  // intermediate storage for the data read
+  std::vector<float>  data_read;
+  
+  // open file for reading
+  std::fstream fh( filename, std::fstream::in);
+  // read data elements 
+  float token;
+  for (int i=0; i < data_size; ++i) {
+    fh >> token;
+    data_read.push_back(token);
+    if (fh.good() == 0) {
+      std::cerr << "FILE HANDLE NOT GOOD" << std::endl;
+      return 1;
+    }
+  }
+    
+  // the last element is read twice
+  fh.close();
+  
+  // copy data
+  memcpy(arr, &data_read.front(), sizeof(float) * data_read.size());  
+  return 0;
+}
+
+//* end of file load function
 // Begin definign functions
 double uniform(double min, double max) {
   return rand() / (RAND_MAX + 1.0) * (max - min) + min;
@@ -196,7 +231,7 @@ void copy_x_to_host(float *x_d, float *x_h) {
   cudaMemcpy(x_h, x_d, size, cudaMemcpyDeviceToHost);
 }
 
-void dA_train_on_device1(dA *model_h, float train_X[N_OBS][N_FEATS], double lr, double corruption_level,int training_epochs) {
+void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corruption_level,int training_epochs) {
   //
   printf("\n ** in device processing ** \n"); 
   //
@@ -211,7 +246,7 @@ void dA_train_on_device1(dA *model_h, float train_X[N_OBS][N_FEATS], double lr, 
   //
   double p = 1 - corruption_level;  
   // flatten input array on host and allocate space on device so we can transsfer it
-  float *X_h = flatten_array(train_X);
+  //float *X_h = flatten_array(train_X);
   float *X_d = allocate_device_x(N_OBS*N_FEATS);
   // allocate space on for tilde_x on device - we do not need it on host. We will allocate
   // per batchsize space for it here
@@ -284,7 +319,8 @@ void dA_train_on_device1(dA *model_h, float train_X[N_OBS][N_FEATS], double lr, 
   //
   // copy data over to device
   unsigned int timer2;cutCreateTimer(&timer2); cutStartTimer(timer2);
-  copy_x_to_device(X_d, X_h);
+  //copy_x_to_device(X_d, X_h);
+  copy_x_to_device(X_d, train_X);
   // copy over data so that initial weights and biases are same
   cudaMemcpy(dW_flat, model_h->W_flat, sizeof(double)*N_HIDDEN*N_FEATS, cudaMemcpyHostToDevice);
   cudaMemcpy(dhbias, model_h->hbias, sizeof(double)*N_HIDDEN, cudaMemcpyHostToDevice);
@@ -435,32 +471,13 @@ void test_dbn(void) {
   int n_hidden = N_HIDDEN;
 
   // training data
-  /*
-  float train_X[N_OBS][N_FEATS] = {
-    {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0}
-  };
-  */
-  //*
-  //  To increase size of array for testing
-  float train_X[N_OBS][N_FEATS];
-  for (int i1=0;i1<N_OBS;i1++) {
-   for (int i2=0;i2<N_FEATS;i2++) {
-        train_X[i1][i2] = 1.0 * (rand() % 2);
-     }
-   }
-  //printf("training input : %f %f\n",train_X[0][0],train_X[N_OBS-1][N_FEATS-1]);
-  //*/
-  //
-
+  float *train_X = (float*)malloc(sizeof(float) * N_OBS * N_FEATS);
+  int error_train = 0;
+  //error_train = read_file(train_X, "/home/class/kumar250/ee5351proj/simple_train.txt", N_OBS);
+  error_train = read_file(train_X, "/home/class/kumar250/ee5351proj/mnist_train.txt", N_OBS);
+  if (error_train) {
+    printf("Error reading training input file");
+  }
   // construct dA
   dA da_gold, da_h;
   dA__construct(&da_gold, train_N, n_visible, n_hidden, NULL, NULL, NULL);
@@ -490,8 +507,9 @@ void test_dbn(void) {
   cutStartTimer(cputimer);
   // train using gold standard
   for(epoch=0; epoch<training_epochs; epoch++) {
-    for(i=0; i<train_N; i++) {
-      dA_train_gold(&da_gold, train_X[i], learning_rate, corruption_level);
+    for(i=0; i<N_OBS; i++) {
+      //dA_train_gold(&da_gold, train_X[i], learning_rate, corruption_level);
+      dA_train_gold(&da_gold, &train_X[i*N_FEATS], learning_rate, corruption_level);
     }
   }
   //
@@ -528,20 +546,14 @@ void test_dbn(void) {
   //* End of GPU Coode
   
   // test data
-  /*
-  float test_X[N_TEST][N_FEATS] = {
-    {1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0}
-  };
-  */
-  //*  To increase size of array for testing
-  float test_X[N_TEST][N_FEATS];
-  for (int i1=0;i1<N_TEST;i1++) {
-   for (int i2=0;i2<N_FEATS;i2++) {
-        test_X[i1][i2] = 1.0 * (rand() % 2);
-     }
-   }
-  //*/
+  float *test_X = (float*)malloc(sizeof(float) * N_TEST * N_FEATS);
+  int error_test = 0;
+  //error_test = read_file(test_X, "/home/class/kumar250/ee5351proj/simple_test.txt", N_TEST);
+  error_test = read_file(test_X, "/home/class/kumar250/ee5351proj/mnist_test.txt", N_TEST);
+  if (error_test) {
+    printf("Error reading test input file");
+  }
+  //
   double reconstructed_X[N_TEST][N_FEATS];
 
   printf("\n : CPU test now: \n");
@@ -550,13 +562,13 @@ void test_dbn(void) {
   fp1 = fopen("ee5351proj-cpu-d784-n10.txt", "w+");
   // test CPU using &da_gold object
   for(i=0; i<N_TEST; i++) {
-    dA_reconstruct(&da_gold, test_X[i], reconstructed_X[i]);
+    dA_reconstruct(&da_gold, &test_X[i*N_FEATS], reconstructed_X[i]);
     for (int j=0;j<N_FEATS;j++) {
-	//printf("%.5f ", reconstructed_X[i][j]);
+	printf("%.5f ", reconstructed_X[i][j]);
     	fprintf(fp1,"%lf\t",reconstructed_X[i][j]);
     }
     fprintf(fp1,"\n");
-    //printf("\n");
+    printf("\n");
   }
   //fprintf(fp, "This is testing for fprintf...\n");
   fclose(fp1);
@@ -568,13 +580,13 @@ void test_dbn(void) {
   fp2 = fopen("ee5351proj-gpu-d784-n10.txt", "w+");
   // test GPU using &da_h object
   for(i=0; i<N_TEST; i++) {
-    dA_reconstruct(&da_h, test_X[i], reconstructed_X[i]);
+    dA_reconstruct(&da_h, &test_X[i*N_FEATS], reconstructed_X[i]);
     for(int j=0; j<N_FEATS; j++) {
-	//printf("%.5f ", reconstructed_X[i][j]);
+	printf("%.5f ", reconstructed_X[i][j]);
     	fprintf(fp2,"%lf\t",reconstructed_X[i][j]);
     }
     fprintf(fp2,"\n");
-    //printf("\n");
+    printf("\n");
   }
 
   fclose(fp2);
