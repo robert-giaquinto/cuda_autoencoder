@@ -145,16 +145,6 @@ int read_file(float *arr, const char* filename, int n_rows) {
 }
 
 
-float* flatten_array(float arr[][N_FEATS], int n_rows) {
-  float *flat = (float *)malloc(sizeof(float) * n_rows * N_FEATS);
-  for (int i=0; i < n_rows; ++i) {
-    for (int j=0; j < N_FEATS; ++j) {
-      flat[i*N_FEATS + j] = arr[i][j];
-    }
-  }
-  return flat;
-}
-
 
 float * allocate_device_x() {
   float *x_d = NULL;
@@ -220,6 +210,8 @@ void free_device(dA *model) {
 void dA_train_on_device(dA *model_h, float *train_X, double learning_rate, double corruption_level, int epochs) {
   // call kernel function from here
   // assign one observation to each block, each thread parallelizes a featires
+  float total_time=0.0f;
+  cudaError_t cuda_ret;
 
   // allocate space on device
   float *X_d = allocate_device_x();
@@ -236,14 +228,19 @@ void dA_train_on_device(dA *model_h, float *train_X, double learning_rate, doubl
   // initialize a random state for each thread;
   curandState *d_state;
   cudaMalloc(&d_state, N_FEATS * BATCH_SIZE);
+
+  unsigned int timer1; cutCreateTimer(&timer1); cutStartTimer(timer1); 
   // run kernel!
   for (int epoch=0; epoch < epochs; ++epoch){
     for (int batch=0; batch < n_updates; ++batch) {
       dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level, batch, d_state);
-      cudaDeviceSynchronize();
+      cuda_ret = cudaDeviceSynchronize();
+      if (cuda_ret != cudaSuccess) printf("error in kernel");
     }
   }
-  
+  cutStopTimer(timer1); total_time += cutGetTimerValue(timer1); cutDeleteTimer(timer1);
+  printf("\nKernel call: %f\n", total_time);  
+
   // read results from device
   copy_ae_from_device(model_h, model_d);
 
@@ -282,6 +279,9 @@ void print_W(dA *model, bool flat) {
 
 void test_dbn(void) {
   srand(0);
+  float device_time;
+  float host_time;
+
   double learning_rate = 0.1;
   double corruption_level = 0.3;
   int training_epochs = 100;
@@ -300,15 +300,30 @@ void test_dbn(void) {
   dA__construct(&da_h, N_OBS, N_FEATS, N_HIDDEN, NULL, NULL, NULL);
 
 
+  printf("\nStarting gold training...");
+  unsigned int cputimer;
+  cutCreateTimer(&cputimer);
+  cutStartTimer(cputimer);
   // train using gold standard
   for(int epoch=0; epoch<training_epochs; epoch++) {
     for(int i=0; i < N_OBS; i++) {
       dA_train_gold(&da_gold, &train_X[i*N_FEATS], learning_rate, corruption_level);
     }
   }
-  
+  cutStopTimer(cputimer);
+  host_time = cutGetTimerValue(cputimer);
+  cutDeleteTimer(cputimer);
+
   // train using kernel
+  printf("Starting device training...");
+  unsigned int gputimer;
+  cutCreateTimer(&gputimer);
+  cutStartTimer(gputimer);
   dA_train_on_device(&da_h, train_X, learning_rate, corruption_level, training_epochs);
+  cutStopTimer(gputimer);
+  device_time = cutGetTimerValue(gputimer);
+  cutDeleteTimer(gputimer);
+
 
   // test data
   float *test_X = (float*)malloc(sizeof(float) * N_TEST * N_FEATS);
@@ -323,6 +338,10 @@ void test_dbn(void) {
   print_reconstruction(&da_gold, test_X, 0);
   printf("\nKernel test output:\n");
   print_reconstruction(&da_h, test_X, 1);
+
+  printf("Host time          : %f\n", host_time);
+  printf("Device time        : %f\n", device_time);
+  printf("Speedup host/device: %fX\n", host_time/device_time);
 
   // destruct dA
   dA__destruct(&da_gold);
