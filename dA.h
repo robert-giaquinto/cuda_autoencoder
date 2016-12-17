@@ -1,11 +1,12 @@
 //#ifndef _DA_H_
 //#define _DA_H_
 
-#define N_FEATS 20
-#define N_OBS 10
+#define N_FEATS 784
+#define N_OBS 100
 #define N_TEST 2
 #define BATCH_SIZE 1
-#define N_HIDDEN 5
+#define N_HIDDEN 500
+#define EPOCHS 100
 #define RANDOM_MAX 100
 
 

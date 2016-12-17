@@ -9,7 +9,8 @@
 
 
 __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state);
-__device__ float binomial_kernel(int n, double p, curandState *state, int id);
+__global__ void init_kernel(unsigned int seed, curandState_t *state);
+__device__ float binomial_kernel(int n, double p, curandState *state);
 __device__ double sigmoid_kernel(double x);
 __device__ void dA_get_corrupted_input_kernel(dA *model, float *x, float *tilde_x, double p);
 __device__ void dA_get_hidden_values_kernel(dA *model, float *x, double *y);
@@ -17,6 +18,15 @@ __device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *
 
 __device__ double atomicAdd(double* address, double val);
 __device__ double atomicMultiply(double* address, double val);
+
+
+
+__global__ void init_kernel(unsigned int seed, curandState_t *state) {
+  //int id = blockIdx.x * blockDim.x + threadIdx.x;
+  int id = threadIdx.x;
+  curand_init(seed, id, 0, &state[id]);
+}
+
 
 /////////////////////////////////////////////////////////////////
 // train functions called from host:
@@ -28,10 +38,6 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
   // skip rows corresponding to previous mini-batches
   int start = gridDim.x * N_FEATS * iter;
 
-  // random seed
-  int id = bid * blockDim.x + tid;
-  curand_init(iter + 1000*bid, id, 0, &state[id]);
-
   // intialize intermediate pieces in shared memory
   // biases:
   __shared__ double L_vbias[N_FEATS];
@@ -39,23 +45,25 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
   if (tid < N_HIDDEN) {
     L_hbias[tid] = 0.0;
   }
-  __syncthreads();
+
 
   // tilde_x: da_get_corrupted_input()
   __shared__ float tilde_x[N_FEATS];
   if (X_d[start + bid*N_FEATS + tid] == 0) {
-    tilde_x[tid] = 0;
+    tilde_x[tid] = 0.0f;
   } else {
-    tilde_x[tid] = binomial_kernel(1, 1.0 - corruption_level, state, id);
+    tilde_x[tid] = binomial_kernel(1, 1.0 - corruption_level, &state[threadIdx.x]);
   }
   __syncthreads();
 
+ 
   // get_hidden_values() : y
   __shared__ double y[N_HIDDEN];
   if (tid < N_HIDDEN) {
     y[tid] = 0.0;
   }
   __syncthreads();
+  
   for (int h=0; h < N_HIDDEN; ++h) {
     atomicAdd(&y[h], model.W_flat[h*N_FEATS + tid] * X_d[start + bid*N_FEATS + tid]);
   }
@@ -65,7 +73,8 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
     y[tid] = sigmoid_kernel(y[tid]);
   }
   __syncthreads();
-
+ 
+  
   // get_reconstructed_input() : z
   __shared__ double z[N_FEATS];
   z[tid] = 0.0;
@@ -83,7 +92,6 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
   model.vbias[tid] += learning_rate * L_vbias[tid] / model.N;
   __syncthreads();
 
-
   // update hbias
   for (int h=0; h < N_HIDDEN; ++h) {
     atomicAdd(&L_hbias[h], model.W_flat[h*N_FEATS + tid] * L_vbias[tid]);
@@ -94,7 +102,7 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
   }
   __syncthreads();  
 
-
+  
   // Update weights
   for (int h=0; h < N_HIDDEN; ++h) {
     atomicAdd(&model.W_flat[h*N_FEATS + tid], learning_rate * (L_hbias[h] * tilde_x[tid] + L_vbias[tid] * y[h]) / model.N / BATCH_SIZE);
@@ -109,15 +117,15 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
 
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
 // NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
-__device__ float binomial_kernel(int n, double p, curandState *state, int id) {
-  if (p < 0 || p > 1) return 0;
+__device__ float binomial_kernel(int n, double p, curandState *state) {
+  if (p < 0 || p > 1) return 0.0f;
 
   int i;
   float c = 0.0f;
-  double r;
+  float r;
 
   for (i = 0; i < n; ++i) {
-    r = curand_uniform_double(&state[id]);  // should be between 0 and 1
+    r = curand_uniform(state);  // should be between 0 and 1
     if (r < p) c += 1.0f;
   }
   return c;

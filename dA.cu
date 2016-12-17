@@ -13,12 +13,16 @@
 #include <dA_kernel.cu>
 
 
+
+ 
+ 
+     
 // declarations for CPU train functions
 extern "C"
-void dA_train_gold(dA*, float*, double, double);
+double* dA_train_gold(dA*, float*, double, double);
 void dA_get_hidden_values(dA*, float*, double*, bool);
 void dA_get_reconstructed_input(dA*, double*, double*, bool);
-
+void dA_get_corrupted_input(dA*, float*, float*, double);
 
 // functions defined in this file are for intializing the autoencoder
 double uniform(double min, double max);
@@ -28,7 +32,7 @@ void dA_reconstruct(dA *model, float *x, double *z, bool flat);
 void test_dbn();
 
 //void dA_train_on_device(dA*, float[][N_FEATS], double, double, int);
-void dA_train_on_device(dA*, float*, double, double, int);
+void dA_train_on_device(dA*, float*, double, double);
 float* flatten_array(float arr[][N_FEATS], int n_rows);
 float* allocate_device_x();
 dA init_device_ae(const dA model_h);
@@ -153,6 +157,7 @@ float * allocate_device_x() {
   return x_d;
 }
 
+
 dA init_device_ae(const dA model_h) {
   // allocate space
   dA model_d;
@@ -182,7 +187,7 @@ dA init_device_ae(const dA model_h) {
 }
 
 void copy_x_to_device(float *x_d, float *x_h) {
-  int size = N_OBS * N_FEATS * sizeof(int);
+  int size = N_OBS * N_FEATS * sizeof(float);
   cudaMemcpy(x_d, x_h, size, cudaMemcpyHostToDevice);
 }
 
@@ -207,10 +212,10 @@ void free_device(dA *model) {
 }
   
 
-void dA_train_on_device(dA *model_h, float *train_X, double learning_rate, double corruption_level, int epochs) {
+void dA_train_on_device(dA *model_h, float *train_X, double learning_rate, double corruption_level) {
   // call kernel function from here
   // assign one observation to each block, each thread parallelizes a featires
-  float total_time=0.0f;
+  float init_time=0.0f, total_time=0.0f;
   cudaError_t cuda_ret;
 
   // allocate space on device
@@ -222,30 +227,44 @@ void dA_train_on_device(dA *model_h, float *train_X, double learning_rate, doubl
 
   // define kernel dimensions
   dim3 dim_grid(BATCH_SIZE, 1, 1);
-  dim3 dim_block(N_FEATS, 1, 1);
+  dim3 dim_block(N_FEATS, 1, 1); 
   // how many mini-batch updates to run?
   int n_updates = ceil((float)N_OBS / (float)BATCH_SIZE);
+
   // initialize a random state for each thread;
   curandState *d_state;
-  cudaMalloc(&d_state, N_FEATS * BATCH_SIZE);
+  cudaMalloc((void **)&d_state, sizeof(curandState) * N_FEATS);
+  // call device to initialize all random states
+  unsigned int timer_init; cutCreateTimer(&timer_init);
+  cutStartTimer(timer_init); 
+  dim3 dgi(1, 1, 1);
+  dim3 dbi(N_FEATS, 1, 1);
+  cutStartTimer(timer_init); 
+  init_kernel<<<dgi, dbi>>>(123, d_state);
+  cutStopTimer(timer_init); init_time += cutGetTimerValue(timer_init); 
+  cutDeleteTimer(timer_init);
+  printf("\nInit call: %f\n", init_time);  
 
-  unsigned int timer1; cutCreateTimer(&timer1); cutStartTimer(timer1); 
+  unsigned int timer1; cutCreateTimer(&timer1);
+  cutStartTimer(timer1); 
   // run kernel!
-  for (int epoch=0; epoch < epochs; ++epoch){
+  for (int epoch=0; epoch < EPOCHS; ++epoch){
+    
     for (int batch=0; batch < n_updates; ++batch) {
       dA_train_kernel<<<dim_grid, dim_block>>>(model_d, X_d, learning_rate, corruption_level, batch, d_state);
       cuda_ret = cudaDeviceSynchronize();
       if (cuda_ret != cudaSuccess) printf("error in kernel");
     }
   }
-  cutStopTimer(timer1); total_time += cutGetTimerValue(timer1); cutDeleteTimer(timer1);
+
+  cutStopTimer(timer1); total_time += cutGetTimerValue(timer1); 
+  cutDeleteTimer(timer1);
   printf("\nKernel call: %f\n", total_time);  
 
   // read results from device
   copy_ae_from_device(model_h, model_d);
 
   // free up memory
-  //free(X_h);
   free_device(&model_d);
   cudaFree(d_state);
 }
@@ -284,12 +303,11 @@ void test_dbn(void) {
 
   double learning_rate = 0.1;
   double corruption_level = 0.3;
-  int training_epochs = 100;
 
   // training data
   float *train_X = (float*)malloc(sizeof(float) * N_OBS * N_FEATS);
   int error_train = 0;
-  error_train = read_file(train_X, "/home/class/smit7982/app/C/src/ee5351/simple_train.txt", N_OBS);
+  error_train = read_file(train_X, "/home/class/smit7982/app/C/src/ee5351/mnist_train.txt", N_OBS);
   if (error_train) {
     printf("Error reading training input file");
   }
@@ -300,44 +318,64 @@ void test_dbn(void) {
   dA__construct(&da_h, N_OBS, N_FEATS, N_HIDDEN, NULL, NULL, NULL);
 
 
-  printf("\nStarting gold training...");
   unsigned int cputimer;
-  cutCreateTimer(&cputimer);
-  cutStartTimer(cputimer);
+
+
   // train using gold standard
-  for(int epoch=0; epoch<training_epochs; epoch++) {
+  for(int epoch=0; epoch<EPOCHS; epoch++) {
+    double *loss_arr;
+    double loss = 0.0;
+    host_time = 0.0;
+
     for(int i=0; i < N_OBS; i++) {
-      dA_train_gold(&da_gold, &train_X[i*N_FEATS], learning_rate, corruption_level);
+      cutCreateTimer(&cputimer);
+      cutStartTimer(cputimer);
+
+      loss_arr = dA_train_gold(&da_gold, &train_X[i*N_FEATS], learning_rate, corruption_level);
+
+      cutStopTimer(cputimer);
+      host_time += cutGetTimerValue(cputimer); 
+      cutDeleteTimer(cputimer);
+
+      for (int j=0; j < N_FEATS; ++j) {
+        loss += loss_arr[j] * loss_arr[j];
+      }
+
     }
+
+    free(loss_arr);
+    printf("%d,%f,%f\n", epoch, host_time, loss / (float)N_OBS);
   }
-  cutStopTimer(cputimer);
-  host_time = cutGetTimerValue(cputimer);
-  cutDeleteTimer(cputimer);
+
+
+
 
   // train using kernel
-  printf("Starting device training...");
+  /*
   unsigned int gputimer;
   cutCreateTimer(&gputimer);
   cutStartTimer(gputimer);
-  dA_train_on_device(&da_h, train_X, learning_rate, corruption_level, training_epochs);
+  dA_train_on_device(&da_h, train_X, learning_rate, corruption_level);
   cutStopTimer(gputimer);
   device_time = cutGetTimerValue(gputimer);
   cutDeleteTimer(gputimer);
-
+  */
 
   // test data
   float *test_X = (float*)malloc(sizeof(float) * N_TEST * N_FEATS);
   int error_test = 0;
-  error_test = read_file(test_X, "/home/class/smit7982/app/C/src/ee5351/simple_test.txt", N_TEST);
+  error_test = read_file(test_X, "/home/class/smit7982/app/C/src/ee5351/mnist_test.txt", N_TEST);
   if (error_test) {
     printf("Error reading test input file");
   }
 
   // test
+  /*
   printf("\nGold test output:\n");
   print_reconstruction(&da_gold, test_X, 0);
   printf("\nKernel test output:\n");
   print_reconstruction(&da_h, test_X, 1);
+  */
 
   printf("Host time          : %f\n", host_time);
   printf("Device time        : %f\n", device_time);
