@@ -5,20 +5,7 @@
 #include <math.h>
 #include <curand.h>
 #include <curand_kernel.h>
-#include "dA.h" // dA struct
-
-#define RANDOM_MAX 100
-//#define N_FEATS 20
-#define N_FEATS 784
-//#define N_OBS 10
-#define N_OBS 100
-#define N_TEST 2
-#define BATCHSIZE 1
-//#define N_HIDDEN 5
-#define N_HIDDEN 128
-#define N_HIDXFEATS (N_HIDDEN*N_FEATS)
-#define BLOCKSIZE 16
-#define TILE_WIDTH BLOCKSIZE
+#include "dA.h" // dA struct and constants
 
 __global__ void dA_train_kernel(dA da, float *X_d, double learning_rate, double corruption_level);
 __device__ float binomial_kernel(int n, double p);
@@ -53,7 +40,6 @@ __global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double co
   da.W_flat[0] = 999.0;
 }
 
-
 ////////////////////////////////////////////////////////////////
 // helper functions needed by the training function
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
@@ -75,24 +61,6 @@ __device__ float binomial_kernel(int n, double p) {
   }
   return c;
 }
-//*/
-/*
-//NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
-// NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
-__device__ int binomial_kernel(int n, double p, curandState *state, int id) {
-  if (p < 0 || p > 1) return 0;
-
-  int i;
-  int c = 0;
-  double r;
-
-  for (i = 0; i < n; ++i) {
-    r = curand_uniform_double(&state[id]);  // should be between 0 and 1
-    if (r < p) c++;
-  }
-  return c;
-}
-*/
 //
 __device__ double sigmoid_kernel(double x) {
   return 1.0 / (1.0 + exp(-x));
@@ -104,19 +72,16 @@ __global__ void dA_get_corrupted_input_kernel(int lenTileX, float *x, float *til
   // while each record will be processed by a separate block in grid. So, gridsize is batch size i.e. no
   // of records in a batch.
   int idx = blockIdx.x*blockDim.x + threadIdx.x; // idx is a global index of each thread..
-  // random seed curand_init(1000*blockIdx.x, idx, 0, &state[idx]);
   if (idx < lenTileX) {
   	if(x[offsetX+idx] == 0) {
       		tilde_x[idx] = 0;
     	} else {
      		tilde_x[idx] = binomial_kernel(1,p);
-		//tilde_x[idx] = binomial_kernel(1, p, state, idx);
     	}  
   }
 }
 //
 __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, float *x, double *yb, int ib) {
-
   //*
   // yi = WX'
   //
@@ -138,7 +103,7 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double 
 	Mds[ty][tx] = 0.0;
 
     if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_visible))
-    	Nds[ty][tx] = x[(Col*n_visible) + (m*TILE_WIDTH + ty)];
+    	Nds[ty][tx] = x[(Col*n_visible) + (m*TILE_WIDTH + tx)];
     else
 	Nds[ty][tx] = 0.0;
     __syncthreads();
@@ -152,13 +117,12 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double 
   if ((Row < n_hidden) && (Col < BATCHSIZE))  {
      yb[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dhbias[Row]);
   }
-  __syncthreads();
+  //__syncthreads();
 	
 }
-
+//
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize) {
-
   //* W'y = visible x batch
   __shared__ double Mds[TILE_WIDTH][TILE_WIDTH];
   __shared__ double Nds[TILE_WIDTH][TILE_WIDTH];
@@ -173,7 +137,8 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
   double Pvalue = 0.0;
   for (int m = 0; m < nTiles; m++) {
     if ((Row < n_visible) && ((m*TILE_WIDTH + tx) < n_hidden))
-    	Mds[ty][tx] = dW[(m*TILE_WIDTH+ty)*n_visible+Row];
+    	Mds[ty][tx] = dW[(m*TILE_WIDTH+tx)*n_visible+Row];
+    	//Mds[ty][tx] = dW[Col*n_visible+(m*TILE_WIDTH+ty)];
     else
 	Mds[ty][tx] = 0.0;
 
@@ -192,9 +157,7 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
   if ((Row < n_visible) && (Col < BATCHSIZE))  {
      z[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dvbias[Row]);
   }
-  __syncthreads();
-  
-
+  //__syncthreads();
 }
 
 //
@@ -237,7 +200,7 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
 	Mds[ty][tx] = 0.0;
 
     if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_visible))
-    	Nds[ty][tx] = dL_vbias[(Col*n_visible) + (m*TILE_WIDTH + ty)];
+    	Nds[ty][tx] = dL_vbias[(Col*n_visible) + (m*TILE_WIDTH + tx)];
     else
 	Nds[ty][tx] = 0.0;
     __syncthreads();
@@ -257,7 +220,7 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
      dL_hbias[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = templhbias;
      atomicAdd(&dhbias[Row],(lr*templhbias/ N));
   }
-  __syncthreads();
+  //__syncthreads();
   
 }
 
@@ -273,7 +236,7 @@ __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hid
  for (int batchIdx = 0; batchIdx < batchsize; batchIdx++){
  	tilde_x_s[threadIdx.x] = tilde_x[batchIdx*N_FEATS+threadIdx.x];
  	dL_vbias_s[threadIdx.x] = dL_vbias[batchIdx*N_FEATS+threadIdx.x];
- 	__syncthreads();
+ 	//__syncthreads();
  	double tempVal = 0.0;
  	if (blockIdx.x < N_HIDDEN){
  		tempVal = dL_hbias[blockIdx.x*batchsize+batchIdx] * tilde_x_s[threadIdx.x];
@@ -281,7 +244,7 @@ __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hid
      		tempVal *= lr / N;     
      		atomicAdd(&dW[blockIdx.x*n_visible+threadIdx.x], tempVal);
  	}
-	__syncthreads();	
+	//__syncthreads();	
 }
   
 }

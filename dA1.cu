@@ -20,14 +20,6 @@ extern "C"
 void dA_train_gold(dA*, float*, double, double);
 void dA_get_hidden_values(dA*, float*, double*);
 void dA_get_reconstructed_input(dA*, double*, double*);
-/*
-void dA_get_corrupted_input(dA*, int*, int*, double);
-void dA_get_hidden_values(dA*, int*, double*);
-void dA_get_reconstructed_input(dA*, double*, double*);
-int binomial(int n, double p);
-double sigmoid(double x);
-*/
-
 // functions defined in this file are for intializing the autoencoder
 double uniform(double min, double max);
 void dA__construct(dA *model, int N, int n_visible, int n_hidden, double **W, double *hbias, double *vbais);
@@ -233,8 +225,6 @@ void copy_x_to_host(float *x_d, float *x_h) {
 
 void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corruption_level,int training_epochs) {
   //
-  printf("\n ** in device processing ** \n"); 
-  //
   cudaError_t cuda_ret;
   int epoch;
   int offsetXval;
@@ -251,10 +241,10 @@ void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corrupti
   // allocate space on for tilde_x on device - we do not need it on host. We will allocate
   // per batchsize space for it here
   float *tilde_x_d = allocate_device_tile_x(BATCHSIZE*N_FEATS);
-  float *tilde_x_h = (float*)malloc(sizeof(float)* BATCHSIZE * N_FEATS);
+  //float *tilde_x_h = (float*)malloc(sizeof(float)* BATCHSIZE * N_FEATS);
   //double *y_h = (double*)malloc(sizeof(double)* N_HIDDEN);
   //yb_d is for dA_get_hidden_values output
-  double *yb_h = (double*)malloc(sizeof(double)* N_HIDDEN*BATCHSIZE);
+  //double *yb_h = (double*)malloc(sizeof(double)* N_HIDDEN*BATCHSIZE);
   double *yb_d = allocate_device_y(N_HIDDEN*BATCHSIZE); 
   //double *y_d = allocate_device_y(N_HIDDEN); 
   // Weight matrices are allocated
@@ -265,23 +255,20 @@ void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corrupti
   double *dvbias = allocate_device_dvbias(); 
   //dA_get_reconstructed_input
   double *z_d = allocate_device_z(N_FEATS*BATCHSIZE);
-  double *z_h = (double*)malloc(sizeof(double)*N_FEATS*BATCHSIZE);
+  //double *z_h = (double*)malloc(sizeof(double)*N_FEATS*BATCHSIZE);
   //Allocate intermediate L_vbias and L_hbias
-  double *L_vbias = (double *)malloc(sizeof(double) * BATCHSIZE * N_FEATS);
+  //double *L_vbias = (double *)malloc(sizeof(double) * BATCHSIZE * N_FEATS);
   double *dL_vbias = allocate_device_dL_vbias(BATCHSIZE,N_FEATS);
-  double *L_hbias = (double *)malloc(sizeof(double) * BATCHSIZE * N_HIDDEN);
+  //double *L_hbias = (double *)malloc(sizeof(double) * BATCHSIZE * N_HIDDEN);
   double *dL_hbias = allocate_device_dL_hbias(BATCHSIZE, N_HIDDEN);
-  // This takes a lot of time so have to see if it is really needed
-  // initialize a random state for each thread;
-  //curandState *d_state;
-  //cudaMalloc(&d_state, N_FEATS * BATCHSIZE);
   //
   //1. kernel configurations for dA_get_corrupted_input_kernel
   dim3 dimGrid31(BATCHSIZE);
   dim3 dimBlock31(N_FEATS);
   //
   //2. kernel config for hidden values y
-  int n32Threads = TILE_WIDTH;
+  //int n32Threads = TILE_WIDTH;
+  int n32Threads = BLOCKSIZE;
   int n32Blocks = N_HIDDEN / n32Threads;
   int m32Blocks = BATCHSIZE / n32Threads;
   if (N_HIDDEN % n32Threads) n32Blocks++;
@@ -290,7 +277,8 @@ void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corrupti
   dim3 dimBlock32(n32Threads,n32Threads);
   //
   //3. kernel config for dA_get_reconstructed_input_kernel
-   int n33Threads = TILE_WIDTH;
+  //int n33Threads = TILE_WIDTH;
+  int n33Threads = BLOCKSIZE;
   int n33Blocks = N_FEATS / n33Threads;
   int m33Blocks = BATCHSIZE / n33Threads;
   if (N_FEATS % n33Threads) n33Blocks++;
@@ -303,7 +291,8 @@ void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corrupti
   dim3 dimBlock34(N_FEATS);
   //
   //5. kernel config for dA_L_hbias_kernel
-  int n35Threads = TILE_WIDTH;
+  //int n35Threads = TILE_WIDTH;
+  int n35Threads = BLOCKSIZE;
   int n35Blocks = N_HIDDEN / n35Threads;
   int m35Blocks = BATCHSIZE / n35Threads;
   if (N_HIDDEN % n35Threads) n35Blocks++;
@@ -396,23 +385,15 @@ void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corrupti
   		cutStopTimer(timer36); time36 += cutGetTimerValue(timer36); cutDeleteTimer(timer36);
 		//end6
  	}
-	//******************************************************************************************************
-
   }
+  //End of epochs ---------------------------------------------------------------------------
   //
-  //Copy weights, vbias, hbias learned from the model back to cpu 
+  //Copy weights, vbias, hbias learned from the model back to cpu model_h for testing
   unsigned int timer4; cutCreateTimer(&timer4);cutStartTimer(timer4);
   cudaMemcpy(model_h->vbias, dvbias,sizeof(double) * N_FEATS, cudaMemcpyDeviceToHost);
   cudaMemcpy(model_h->hbias, dhbias,sizeof(double) * N_HIDDEN, cudaMemcpyDeviceToHost);
   cudaMemcpy(model_h->W_flat, dW_flat,sizeof(double) * N_HIDDEN * N_FEATS, cudaMemcpyDeviceToHost);
-  //*
-  //printf("ibb is: %d\n",ib);
-  //for(int i=0;i<N_OBS;i++) { printf("\ntile_x_h : "); for(int j=0;j<5;j++){ printf(" %f ",tilde_x_h[i*N_OBS+j]); }}
-  //for(int i=0;i<N_OBS;i++) {printf("\nz_h: "); for(int j=0;j<5;j++){ printf(" %f ",z_h[j]); }}
-  //printf("\nh vbias: "); for(int j=0;j<N_FEATS;j++){ printf(" %f ",model_h->vbias[j]); }
-  //printf("\nh hbias: "); for(int j=0;j<N_HIDDEN;j++){ printf(" %f ",model_h->hbias[j]); }
-  //printf("\nh Weights: ");for(int j=0;j<N_HIDDEN*N_FEATS;j++){ printf(" %f ",model_h->W_flat[j]); }
-  //*/
+  //
   cutStopTimer(timer4); time4 += cutGetTimerValue(timer4); cutDeleteTimer(timer4);
   //
   //Testing needs W[i][j] format, so copying flattened W to W[i][j]
@@ -432,13 +413,13 @@ void dA_train_on_device1(dA *model_h, float *train_X, double lr, double corrupti
   X_d = NULL;tilde_x_d = NULL; dW_flat = NULL; dhbias = NULL;
   dvbias = NULL; dL_vbias = NULL;dL_hbias = NULL; z_d = NULL; 
   //
-  free(L_hbias);free(L_vbias);free(z_h);free(yb_h); yb_h = NULL;
-  free(tilde_x_h); tilde_x_h = NULL;
+  //free(L_hbias);free(L_vbias);free(z_h);free(yb_h); yb_h = NULL;
+  //free(tilde_x_h); tilde_x_h = NULL;
   free(hW_flat); hW_flat = NULL;
   //
   cutStopTimer(timer5); time5 += cutGetTimerValue(timer5); cutDeleteTimer(timer5);
   //
-  printf("\n");
+     printf("\n");
   printf("time1  Initial Allocations               : %f\n", time1);
   printf("time2  Transfer data to device           : %f\n", time2);
   printf("time31 dA_get_corrupted_input_kernel     : %f\n", time31);
@@ -465,7 +446,6 @@ void test_dbn(void) {
   //int training_epochs = 100;
   int training_epochs = 100;
 
-  //int train_N = 10;
   int train_N = N_OBS;
   int n_visible = N_FEATS;
   int n_hidden = N_HIDDEN;
@@ -489,18 +469,6 @@ void test_dbn(void) {
     }
   }
   //
-  /* ** to compare, initial values should be same for both the objects
-  printf("da_gold W      : %f %f %f \n", da_gold.W[0][0],da_gold.W[0][1],da_gold.W[0][2]);
-  printf("da_h W         : %f %f %f \n", da_h.W[0][0],da_h.W[0][1],da_h.W[0][2]);
-  printf("da_gold W_flat : %f %f %f \n", da_gold.W_flat[0],da_gold.W_flat[1],da_gold.W_flat[2]);
-  printf("da_h W_flat    : %f %f %f \n", da_h.W_flat[0],da_h.W_flat[1],da_h.W_flat[2]);
-  printf("da_gold n_visi : %d \n", da_gold.n_visible);
-  printf("da_h n_visible : %d \n", da_h.n_visible);
-  printf("da_gold hbias  : %f %f %f \n",da_gold.hbias[0],da_gold.hbias[1],da_gold.hbias[2]);
-  printf("da_h hbias     : %f %f %f \n",da_h.hbias[0],da_h.hbias[1],da_h.hbias[2]);
-  printf("da_gold vbias  : %f %f %f \n",da_gold.vbias[0],da_gold.vbias[1],da_gold.vbias[2]);
-  printf("da_h vbias     : %f %f %f \n",da_h.vbias[0],da_h.vbias[1],da_h.vbias[2]);
-  */
   printf("\nStarting gold training..");
   unsigned int cputimer;
   cutCreateTimer(&cputimer);
@@ -532,17 +500,7 @@ void test_dbn(void) {
   device_time = cutGetTimerValue(gputimer);
   cutDeleteTimer(gputimer);
   printf("\nEnding device training..");
-  //*
   //
-  printf("\nCPU Weights:"); for(int j=0;j<5;j++) {printf("%f ", da_gold.W_flat[j]);};
-  printf("\nGPU Weights:"); for(int j=0;j<5;j++) {printf("%f ", da_h.W_flat[j]);};
-  //
-  printf("\nCPU hbias:"); for(int j=0;j<5;j++) {printf("%f ", da_gold.hbias[j]);};
-  printf("\nGPU hbias:"); for(int j=0;j<5;j++) {printf("%f ", da_h.hbias[j]);};
-  //
-  printf("\nCPU vbias:"); for(int j=0;j<5;j++) {printf("%f ", da_gold.vbias[j]);};
-  printf("\nGPU vbias:"); for(int j=0;j<5;j++) {printf("%f ", da_h.vbias[j]);};
-  //*/
   //* End of GPU Coode
   
   // test data
@@ -555,49 +513,51 @@ void test_dbn(void) {
   }
   //
   double reconstructed_X[N_TEST][N_FEATS];
-
+  //
   printf("\n : CPU test now: \n");
   //write cpu output file
   FILE *fp1;
-  fp1 = fopen("ee5351proj-cpu-d784-n10.txt", "w+");
+  fp1 = fopen(CPU_TEST_FNAME, "w+");
   // test CPU using &da_gold object
   for(i=0; i<N_TEST; i++) {
     dA_reconstruct(&da_gold, &test_X[i*N_FEATS], reconstructed_X[i]);
     for (int j=0;j<N_FEATS;j++) {
-	printf("%.5f ", reconstructed_X[i][j]);
+	//printf("%.5f ", reconstructed_X[i][j]);
     	fprintf(fp1,"%lf\t",reconstructed_X[i][j]);
     }
     fprintf(fp1,"\n");
-    printf("\n");
+    //printf("\n");
   }
-  //fprintf(fp, "This is testing for fprintf...\n");
   fclose(fp1);
   //cutWriteFilef("cpu-d784-n10.txt", reconstructed_X, ,0.0001f);
   //
-   printf("\n : GPU test now: \n");
+  printf("\n : GPU test now: \n");
   //write gpu output file
   FILE *fp2;
-  fp2 = fopen("ee5351proj-gpu-d784-n10.txt", "w+");
+  fp2 = fopen(GPU_TEST_FNAME, "w+");
   // test GPU using &da_h object
   for(i=0; i<N_TEST; i++) {
     dA_reconstruct(&da_h, &test_X[i*N_FEATS], reconstructed_X[i]);
     for(int j=0; j<N_FEATS; j++) {
-	printf("%.5f ", reconstructed_X[i][j]);
+	//printf("%.5f ", reconstructed_X[i][j]);
     	fprintf(fp2,"%lf\t",reconstructed_X[i][j]);
     }
     fprintf(fp2,"\n");
-    printf("\n");
+    //printf("\n");
   }
-
   fclose(fp2);
   //
   // destruct dA
   dA__destruct(&da_gold);
   dA__destruct(&da_h);
-    //
+  //
+    printf("\n");
   printf("Host time          : %f\n", host_time);
   printf("Device time        : %f\n", device_time);
   printf("Speedup host/device: %fX\n", host_time/device_time);
+  printf("\n");
+  printf("CPU test output file is : %s\n",CPU_TEST_FNAME);
+  printf("GPU test output file is : %s\n",GPU_TEST_FNAME);
   printf("***testing over***\n");
 
 }
