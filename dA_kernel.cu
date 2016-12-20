@@ -34,12 +34,6 @@ __device__ double atomicAdd(double* address, double val)
     return __longlong_as_double(old);
 }
 
-// 1. using global memory
-__global__ void dA_train_kernel(dA da, int *X_d, double learning_rate, double corruption_level) {
-  da.hbias[0] = 999.0;
-  da.W_flat[0] = 999.0;
-}
-
 ////////////////////////////////////////////////////////////////
 // helper functions needed by the training function
 //NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
@@ -80,7 +74,9 @@ __global__ void dA_get_corrupted_input_kernel(int lenTileX, float *x, float *til
     	}  
   }
 }
-//
+//******************************************************************************************
+//ENCODING
+//******************************************************************************************
 __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double *dW, double *dhbias, float *x, double *yb, int ib) {
   //*
   // yi = WX'
@@ -103,7 +99,7 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double 
 	Mds[ty][tx] = 0.0;
 
     if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_visible))
-    	Nds[ty][tx] = x[(Col*n_visible) + (m*TILE_WIDTH + tx)];
+    	Nds[ty][tx] = x[(Col*n_visible) + (m*TILE_WIDTH + ty)];
     else
 	Nds[ty][tx] = 0.0;
     __syncthreads();
@@ -117,10 +113,11 @@ __global__ void dA_get_hidden_values_kernel(int n_hidden, int n_visible, double 
   if ((Row < n_hidden) && (Col < BATCHSIZE))  {
      yb[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dhbias[Row]);
   }
-  //__syncthreads();
 	
 }
-//
+//*******************************************************************************************
+//DECODING
+//*******************************************************************************************
 __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,double *dW, double *dvbias,
 				 double *z, double *y, int ib, int batchsize) {
   //* W'y = visible x batch
@@ -138,7 +135,6 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
   for (int m = 0; m < nTiles; m++) {
     if ((Row < n_visible) && ((m*TILE_WIDTH + tx) < n_hidden))
     	Mds[ty][tx] = dW[(m*TILE_WIDTH+tx)*n_visible+Row];
-    	//Mds[ty][tx] = dW[Col*n_visible+(m*TILE_WIDTH+ty)];
     else
 	Mds[ty][tx] = 0.0;
 
@@ -157,10 +153,11 @@ __global__ void dA_get_reconstructed_input_kernel(int n_hidden, int n_visible,do
   if ((Row < n_visible) && (Col < BATCHSIZE))  {
      z[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = sigmoid_kernel(Pvalue + dvbias[Row]);
   }
-  //__syncthreads();
 }
 
-//
+//***************************************************************************************************
+// CALCULATE ERROR IN RECONSTRUCTION - vbias error and update vbias
+//***************************************************************************************************
 __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n_visible, float *x, double *z, int offsetX, int batchsize,double lr) {
   // We allow each thread to load one feature of one record. So, each block will have n_visible threads
   // while each record will be processed by a separate block in grid. So, gridsize is batch size i.e. no
@@ -176,7 +173,9 @@ __global__ void dA_L_vbias_kernel(int N, double *dL_vbias, double *dvbias, int n
   }
 }
 
-// 
+//**************************************************************************************************
+//Hidden error using tiled matrix mult and hbias update
+//**************************************************************************************************
 __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, double *dhbias, int n_hidden, int n_visible, double *y, double *dW, 
 		int ib, int batchsize,double lr) {
   //*
@@ -200,7 +199,7 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
 	Mds[ty][tx] = 0.0;
 
     if ((Col < BATCHSIZE) && ((m*TILE_WIDTH + ty) < n_visible))
-    	Nds[ty][tx] = dL_vbias[(Col*n_visible) + (m*TILE_WIDTH + tx)];
+    	Nds[ty][tx] = dL_vbias[(Col*n_visible) + (m*TILE_WIDTH + ty)];
     else
 	Nds[ty][tx] = 0.0;
     __syncthreads();
@@ -220,11 +219,12 @@ __global__ void dA_L_hbias_kernel(int N,double *dL_vbias,double *dL_hbias, doubl
      dL_hbias[(by * blockDim.y + ty)*BATCHSIZE + (bx * blockDim.x + tx)] = templhbias;
      atomicAdd(&dhbias[Row],(lr*templhbias/ N));
   }
-  //__syncthreads();
   
 }
 
-//
+//******************************************************************************************
+//Weights updates - block has no of feats and gridd has no of hidden units
+//*******************************************************************************************
 __global__ void dA_W_kernel(int N, double *dL_vbias, double *dL_hbias, int n_hidden, int n_visible, double *yb, double *dW, 
 		float *tilde_x, int ib, int batchsize,double lr) {
   // We will try to use hidden elements in global memory and try to put visible dimensions in shared memory
