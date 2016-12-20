@@ -16,9 +16,10 @@ gunzip http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
 ```
 2. Convert MNIST data from binary to a CSV file via `python convert_mnist_to_txt.py`
 
+After extracting the data, all parameters (including which data files to train on) can be set in the header file `dA.h` or `dA_naive.h`. Sensible defaults given for these.
 
 ### Compiling
-Compile the programs with the MAKEFILE included in this repository. This will produce two executables: `dA_naive` and `dA` reflecting our naive and final implementations.
+Compile the programs with the MAKEFILE included in this repository. Presently, the MAKEFILE will not compile the naive implementation (although this code can be uncommented to do so).
 
 
 
