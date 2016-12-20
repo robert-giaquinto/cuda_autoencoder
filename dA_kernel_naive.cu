@@ -1,27 +1,23 @@
-#ifndef _DA_KERNEL_H_
-#define _DA_KERNEL_H_
+#ifndef _DA_KERNEL_NAIVE_H_
+#define _DA_KERNEL_NAIVE_H_
 
 #include <stdio.h>
 #include <math.h>
 #include <curand.h>
 #include <curand_kernel.h>
-#include "dA.h" // dA struct
+#include "dA_naive.h" // dA struct
 
 
-__global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state);
-__global__ void init_kernel(unsigned int seed, curandState_t *state);
-__device__ float binomial_kernel(int n, double p, curandState *state);
+__global__ void dA_train_kernel_naive(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state);
+__global__ void init_kernel_naive(unsigned int seed, curandState_t *state);
+__device__ float binomial_kernel_naive(int n, double p, curandState *state);
 __device__ double sigmoid_kernel(double x);
-__device__ void dA_get_corrupted_input_kernel(dA *model, float *x, float *tilde_x, double p);
-__device__ void dA_get_hidden_values_kernel(dA *model, float *x, double *y);
-__device__ void dA_get_reconstructed_input_kernel(dA *model, double *y, double *z);
-
 __device__ double atomicAdd(double* address, double val);
 __device__ double atomicMultiply(double* address, double val);
 
 
 
-__global__ void init_kernel(unsigned int seed, curandState_t *state) {
+__global__ void init_kernel_naive(unsigned int seed, curandState_t *state) {
   //int id = blockIdx.x * blockDim.x + threadIdx.x;
   int id = threadIdx.x;
   curand_init(seed, id, 0, &state[id]);
@@ -32,7 +28,7 @@ __global__ void init_kernel(unsigned int seed, curandState_t *state) {
 // train functions called from host:
 
 // 1. using global memory, intermediate results may as well be in shared
-__global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state) {
+__global__ void dA_train_kernel_naive(dA model, float *X_d, double learning_rate, double corruption_level, int iter, curandState *state) {
   int bid = blockIdx.x;
   int tid = threadIdx.x;
   // skip rows corresponding to previous mini-batches
@@ -52,7 +48,7 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
   if (X_d[start + bid*N_FEATS + tid] == 0) {
     tilde_x[tid] = 0.0f;
   } else {
-    tilde_x[tid] = binomial_kernel(1, 1.0 - corruption_level, &state[threadIdx.x]);
+    tilde_x[tid] = binomial_kernel_naive(1, 1.0 - corruption_level, &state[threadIdx.x]);
   }
   __syncthreads();
 
@@ -115,9 +111,7 @@ __global__ void dA_train_kernel(dA model, float *X_d, double learning_rate, doub
 ////////////////////////////////////////////////////////////////
 // helper functions needed by the training function
 
-//NOTE: cuda kernal may not have rand() and RAND_MAX!!!!
-// NOTE MAKE THIS USE THE OPTIMIZED FUNCTIONS!!!
-__device__ float binomial_kernel(int n, double p, curandState *state) {
+__device__ float binomial_kernel_naive(int n, double p, curandState *state) {
   if (p < 0 || p > 1) return 0.0f;
 
   int i;
@@ -167,19 +161,4 @@ __device__ double atomicMultiply(double* address, double val)
 
 
 
-__device__ void dA_get_corrupted_input_kernel(dA* model, int *x, int *tilde_x, double p) {
-
-}
-
-
-__device__ void dA_get_hidden_values_kernel(dA* model, int *x, double *y) {
-
-}
-
-
-__device__ void dA_get_reconstructed_input_kernel(dA* model, double *y, double *z) {
-
-}
-
-
-#endif // #ifndef _DA_KERNEL_H_
+#endif // #ifndef _DA_KERNEL_NAIVE_H_

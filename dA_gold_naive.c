@@ -1,10 +1,10 @@
 #include <stdlib.h>
 #include <math.h>
-#include "dA.h"
+#include "dA_naive.h"
 
 // export C interface
 extern "C"
-double* dA_train_gold(dA*, float*, double, double);
+void dA_train_gold(dA*, float*, double, double);
 void dA_get_corrupted_input(dA*, float*, float*, double);
 void dA_get_hidden_values(dA*, float*, double*, bool);
 void dA_get_reconstructed_input(dA*, double*, double*, bool);
@@ -82,7 +82,7 @@ void dA_get_reconstructed_input(dA* model, double *y, double *z, bool flat) {
 
 
 // Train for one observation
-double* dA_train_gold(dA* model, float *x, double lr, double corruption_level) {
+void dA_train_gold(dA* model, float *x, double lr, double corruption_level) {
   int i, j;
 
   float *tilde_x = (float *)malloc(sizeof(float) * model->n_visible);
@@ -123,9 +123,8 @@ double* dA_train_gold(dA* model, float *x, double lr, double corruption_level) {
   }
 
   free(L_hbias);
-  //free(L_vbias);
+  free(L_vbias);
   free(z);
   free(y);
   free(tilde_x);
-  return L_vbias;
 }
