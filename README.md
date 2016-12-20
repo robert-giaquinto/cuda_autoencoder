@@ -6,20 +6,19 @@ Included in this repository are a small test and train dataset, `simple_test.txt
 
 Alternatively you can download the MNIST data via: 
 
-0. Download each MNIST handwritten digits file:
+1. Unzip each of the MNIST data files (all the zipped files are included in this repository).
 
 ```bash
-wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
-wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
-wget http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
-wget http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
+gunzip http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
+gunzip http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
+gunzip http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
+gunzip http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
 ```
-1. Unzip each of the MNIST data files via `gunzip <FILE NAME>`.
 2. Convert MNIST data from binary to a CSV file via `python convert_mnist_to_txt.py`
 
 
 ### Compiling
-Compile the programs with the MAKEFILE included in this repository.
+Compile the programs with the MAKEFILE included in this repository. This will produce two executables: `dA_naive` and `dA` reflecting our naive and final implementations.
 
 
 
