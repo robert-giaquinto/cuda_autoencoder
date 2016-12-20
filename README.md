@@ -24,13 +24,14 @@ Compile the programs with the MAKEFILE included in this repository. Presently, t
 
 
 ### Literature
-https://cs224d.stanford.edu/reports/OshriBarak.pdf
+[1] Pascal Vincent, Hugo Larochelle, Isabelle Lajoie, YoshuaBengio, and Pierre-Antoine Manzagol. Stacked denoisingautoencoders: Learning useful representations in a deepnetwork with a local denoising criterion. 11:3371–3408,December 2010.
 
-http://timdettmers.com/2014/10/09/deep-learning-data-parallelism/
+[2] Geoffrey E Hinton and Ruslan R Salakhutdinov. Reducing thedimensionality of data with neural networks.Science,313(5786):504–507, 2006.
 
-http://link.springer.com/chapter/10.1007/978-3-642-31656-2_140
+[3] Pascal Vincent, Hugo Larochelle, Yoshua Bengio, andPierre-Antoine Manzagol. Extracting and composing robustfeatures with denoising autoencoders. InProceedings of the25th international conference on Machine learning, pages1096–1103. ACM, 2008.
 
-2008 Paper on Denoising Autoencoders:
-https://www.iro.umontreal.ca/~vincentp/Publications/denoising_autoencoders_tr1316.pdf
+[4] David B. Kirk and Wen-mei W. Hwu.Programming MassivelyParallel Processors: A Hands-on Approach. Morgan KaufmannPublishers Inc., San Francisco, CA, USA, 1st edition, 2010.
+
+[5]Olivier Bousquet and Leon Bottou. The tradeoffs of large scalelearning, 2008.
 
 
