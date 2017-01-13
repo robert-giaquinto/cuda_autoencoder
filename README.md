@@ -23,6 +23,7 @@ Compile the programs with the MAKEFILE included in this repository. Presently, t
 
 
 
+
 ### Literature
 [1] Pascal Vincent, Hugo Larochelle, Isabelle Lajoie, YoshuaBengio, and Pierre-Antoine Manzagol. Stacked denoisingautoencoders: Learning useful representations in a deepnetwork with a local denoising criterion. 11:3371–3408,December 2010.
 
